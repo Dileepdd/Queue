@@ -1,0 +1,137 @@
+{
+  "info": {
+    "name": "Queue System API",
+    "description": "Collection for producer endpoints: health, enqueue jobs, and dead-letter reprocess.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "deadLetterId",
+      "value": "1"
+    },
+    {
+      "key": "tenantId",
+      "value": "tenant1"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Enqueue Email (Immediate)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"job\": {\n    \"name\": \"email.send\",\n    \"metadata\": {\n      \"idempotencyKey\": \"{{tenantId}}:email.send:user123:send:v1-{{$timestamp}}\",\n      \"correlationId\": \"corr-email-{{$timestamp}}\",\n      \"requestedAt\": \"{{$isoTimestamp}}\",\n      \"tenantId\": \"{{tenantId}}\",\n      \"schemaVersion\": 1,\n      \"priority\": \"default\",\n      \"workload\": \"io-bound\"\n    },\n    \"payload\": {\n      \"to\": \"user@example.com\",\n      \"subject\": \"Welcome\",\n      \"body\": \"Hello from queue system\"\n    }\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/jobs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "jobs"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Enqueue Report (Delayed)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"job\": {\n    \"name\": \"report.generate\",\n    \"metadata\": {\n      \"idempotencyKey\": \"{{tenantId}}:report.generate:report42:v1-{{$timestamp}}\",\n      \"correlationId\": \"corr-report-{{$timestamp}}\",\n      \"requestedAt\": \"{{$isoTimestamp}}\",\n      \"tenantId\": \"{{tenantId}}\",\n      \"schemaVersion\": 1,\n      \"priority\": \"default\",\n      \"workload\": \"cpu-heavy\"\n    },\n    \"payload\": {\n      \"reportId\": \"report-42\",\n      \"format\": \"csv\"\n    }\n  },\n  \"delayMs\": 5000\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/jobs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "jobs"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Enqueue Webhook (Sharded)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"job\": {\n    \"name\": \"webhook.dispatch\",\n    \"metadata\": {\n      \"idempotencyKey\": \"{{tenantId}}:webhook.dispatch:event123:v1-{{$timestamp}}\",\n      \"correlationId\": \"corr-webhook-{{$timestamp}}\",\n      \"requestedAt\": \"{{$isoTimestamp}}\",\n      \"tenantId\": \"{{tenantId}}\",\n      \"schemaVersion\": 1,\n      \"priority\": \"high\",\n      \"workload\": \"io-bound\",\n      \"partitionKey\": \"tenant1-key\"\n    },\n    \"payload\": {\n      \"endpoint\": \"https://httpbin.org/post\",\n      \"eventType\": \"user.created\",\n      \"data\": {\n        \"userId\": \"u-123\",\n        \"email\": \"user@example.com\"\n      }\n    }\n  },\n  \"shardCount\": 4\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/jobs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "jobs"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Reprocess Dead Letter",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/dead-letter/{{deadLetterId}}/reprocess",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "dead-letter",
+            "{{deadLetterId}}",
+            "reprocess"
+          ]
+        }
+      }
+    }
+  ]
+}
