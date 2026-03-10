@@ -6,6 +6,7 @@ const metadataSchema = z.object({
   correlationId: z.string().min(8),
   requestedAt: z.string().datetime(),
   tenantId: z.string().min(1),
+  enqueueSource: z.enum(['individual', 'bulk']).optional(),
   schemaVersion: z.number().int().min(1),
   priority: z.enum(['high', 'default', 'low']),
   workload: z.enum(['io-bound', 'cpu-heavy']),
@@ -23,7 +24,12 @@ const payloadSchemas = {
 } satisfies { [K in JobName]: z.ZodType<JobPayloadMap[K], z.ZodTypeDef, unknown> };
 
 const envelopeSchemaMap = {
-  'webhook.dispatch': z.object({ name: z.literal('webhook.dispatch'), metadata: metadataSchema, payload: payloadSchemas['webhook.dispatch'] }),
+  'webhook.dispatch': z.object({
+    name: z.literal('webhook.dispatch'),
+    executionMode: z.enum(['parallel', 'sequential']).default('parallel'),
+    metadata: metadataSchema,
+    payload: payloadSchemas['webhook.dispatch'],
+  }),
 } as const;
 
 export const anyJobEnvelopeSchema: z.ZodType<AnyJobEnvelope, z.ZodTypeDef, unknown> = envelopeSchemaMap['webhook.dispatch'];

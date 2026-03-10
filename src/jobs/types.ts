@@ -1,12 +1,15 @@
 import type { QueuePriority, QueueWorkload } from './queues.js';
 
 export type JobName = 'webhook.dispatch';
+export type ExecutionMode = 'parallel' | 'sequential';
+export type EnqueueSource = 'individual' | 'bulk';
 
 export interface JobMetadata {
   idempotencyKey: string;
   correlationId: string;
   requestedAt: string;
   tenantId: string;
+  enqueueSource?: EnqueueSource | undefined;
   schemaVersion: number;
   priority: QueuePriority;
   workload: QueueWorkload;
@@ -35,6 +38,7 @@ export type JobResult<K extends JobName> = JobResultMap[K];
 export type AnyJobEnvelope = {
   [K in JobName]: {
     name: K;
+    executionMode: ExecutionMode;
     metadata: JobMetadata;
     payload: JobPayload<K>;
   };

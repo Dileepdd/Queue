@@ -9,7 +9,7 @@ import { closeDbPool } from '../infra/db.js';
 import { AppError } from '../shared/errors.js';
 import { logger } from '../shared/logger.js';
 import { getJobStatusByJobId, getJobTimelineByJobId, listJobStatuses } from '../status/index.js';
-import { enqueueJob } from './enqueue-service.js';
+import { enqueueJob, enqueueJobsBulk } from './enqueue-service.js';
 import { closeAllQueues } from './queue-registry.js';
 import { bulkEnqueueRequestSchema, enqueueRequestSchema } from './schemas.js';
 
@@ -159,16 +159,43 @@ export function createProducerApp() {
 
   app.post('/jobs', clientAuth, async (req, res, next) => {
     try {
-      const parsed = enqueueRequestSchema.parse(req.body);
       const authTenantId = (res.locals.auth as { tenantId?: string } | undefined)?.tenantId;
+      const body = req.body as { uniqueId?: unknown; job?: { name?: unknown; metadata?: { correlationId?: unknown } } };
+      logger.info(
+        {
+          route: '/jobs',
+          tenantId: authTenantId,
+          uniqueId: typeof body?.uniqueId === 'string' ? body.uniqueId : undefined,
+          jobName: typeof body?.job?.name === 'string' ? body.job.name : undefined,
+          correlationId:
+            typeof body?.job?.metadata?.correlationId === 'string' ? body.job.metadata.correlationId : undefined,
+        },
+        'enqueue request received',
+      );
+
+      const parsed = enqueueRequestSchema.parse(req.body);
       const result = await enqueueJob({
         job: parsed.job,
+        enqueueSource: 'individual',
         ...(parsed.uniqueId !== undefined ? { uniqueId: parsed.uniqueId } : {}),
+        ...(parsed.executionMode !== undefined ? { executionMode: parsed.executionMode } : {}),
         ...(parsed.delayMs !== undefined ? { delayMs: parsed.delayMs } : {}),
         ...(parsed.retryCount !== undefined ? { retryCount: parsed.retryCount } : {}),
         ...(parsed.shardCount !== undefined ? { shardCount: parsed.shardCount } : {}),
         ...(authTenantId ? { tenantIdHint: authTenantId } : {}),
       });
+
+      logger.info(
+        {
+          enqueueSource: 'individual',
+          tenantId: authTenantId,
+          queueName: result.queueName,
+          jobId: result.jobId,
+          delayed: result.delayed,
+          delayMs: result.delayMs,
+        },
+        'job enqueued',
+      );
 
       res.status(202).json({
         accepted: true,
@@ -184,32 +211,50 @@ export function createProducerApp() {
 
   app.post('/jobs/bulk', clientAuth, async (req, res, next) => {
     try {
-      const parsed = bulkEnqueueRequestSchema.parse(req.body);
       const authTenantId = (res.locals.auth as { tenantId?: string } | undefined)?.tenantId;
+      const body = req.body as { items?: unknown[]; defaults?: { executionMode?: unknown } };
+      logger.info(
+        {
+          route: '/jobs/bulk',
+          tenantId: authTenantId,
+          itemCount: Array.isArray(body?.items) ? body.items.length : undefined,
+          defaultExecutionMode:
+            body?.defaults?.executionMode === 'parallel' || body?.defaults?.executionMode === 'sequential'
+              ? body.defaults.executionMode
+              : undefined,
+        },
+        'bulk enqueue request received',
+      );
 
-      const results: Array<{ index: number; queueName: string; jobId: string }> = [];
-      for (const [index, item] of parsed.items.entries()) {
-        const result = await enqueueJob({
+      const parsed = bulkEnqueueRequestSchema.parse(req.body);
+
+      const jobs = await enqueueJobsBulk(
+        parsed.items.map((item) => ({
           job: item.job,
+          enqueueSource: 'bulk',
           uniqueId: item.uniqueId ?? parsed.defaults?.uniqueId,
+          executionMode: item.executionMode ?? parsed.defaults?.executionMode,
           delayMs: item.delayMs ?? parsed.defaults?.delayMs,
           retryCount: item.retryCount ?? parsed.defaults?.retryCount,
           shardCount: item.shardCount ?? parsed.defaults?.shardCount,
           ...(authTenantId ? { tenantIdHint: authTenantId } : {}),
           skipAdmissionRateLimit: true,
-        });
+        })),
+      );
 
-        results.push({
-          index,
-          queueName: result.queueName,
-          jobId: result.jobId,
-        });
-      }
+      logger.info(
+        {
+          enqueueSource: 'bulk',
+          tenantId: authTenantId,
+          totalRequested: parsed.items.length,
+          totalEnqueued: jobs.length,
+        },
+        'bulk jobs enqueued',
+      );
 
       res.status(202).json({
-        accepted: true,
-        totalEnqueued: results.length,
-        items: results,
+        totalEnqueued: jobs.length,
+        jobs,
       });
     } catch (error) {
       next(error);

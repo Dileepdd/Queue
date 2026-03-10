@@ -345,6 +345,9 @@ Full (optional metadata override):
 - `uniqueId`: Optional user/entity routing key.
   - Recommended for per-user ordering: send same `uniqueId` for that user.
   - Mapped to `job.metadata.partitionKey` when `partitionKey` is not provided.
+- `executionMode`: Optional job execution mode.
+  - Allowed: `parallel` (default), `sequential`.
+  - Use `sequential` to enforce one-by-one processing for the same partition lane.
 - `delayMs`: Optional. Delay before job becomes available to workers. Must be `>= 0`.
 - `retryCount`: Optional. Number of retries after the first attempt. Must be `0..20`.
   - Example: `retryCount: 3` means up to 4 total attempts (1 first try + 3 retries).
@@ -370,6 +373,9 @@ Full (optional metadata override):
 - `tenantId`: Optional (non-empty string).
   - Why: tenant isolation, per-tenant throttling, and DB partitioning context.
   - Note: when auth is enabled, tenant is inferred from auth context.
+- `enqueueSource`: Server-maintained flag (`individual` or `bulk`).
+  - Why: helps operators distinguish single enqueue vs bulk import paths in status/timeline data.
+  - Note: clients normally do not need to send this; producer sets it automatically.
 - `schemaVersion`: Optional (integer >= 1).
   - Why: supports payload contract evolution safely.
 - `priority`: Optional.
@@ -665,7 +671,7 @@ This is a rough operational estimate and excludes infrastructure outages.
 
 Purpose:
 - Accept up to `10,000` jobs in one API call.
-- Server enqueues items one-by-one in request order.
+- Server validates all items, then enqueues to Redis in internal batches for better throughput.
 
 Authentication:
 - Required (Bearer token or HMAC headers).
@@ -675,6 +681,7 @@ Request body:
 ```json
 {
   "defaults": {
+    "executionMode": "parallel",
     "retryCount": 3,
     "delayMs": 0
   },
@@ -700,10 +707,27 @@ Rules:
 - `items` min `1`, max `10000`.
 - Each item has same shape as `POST /jobs`.
 - Item value overrides `defaults` when both are present.
+- `executionMode` can be set in `defaults` and/or per item (`parallel` or `sequential`).
 
 Success:
 - Status: `202`
-- Body includes `totalEnqueued` and one result per item.
+- Body:
+
+```json
+{
+  "totalEnqueued": 2,
+  "jobs": [
+    {
+      "jobId": "tenant1__tenant1__webhook.dispatch__data.imported__v1-001",
+      "queue": "default-io"
+    },
+    {
+      "jobId": "tenant1__tenant1__webhook.dispatch__data.imported__v1-002",
+      "queue": "default-io"
+    }
+  ]
+}
+```
 
 Notes:
 - This endpoint bypasses per-request tenant admission limiting because the whole batch is one request.

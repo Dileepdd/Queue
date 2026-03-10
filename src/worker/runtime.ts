@@ -1,10 +1,13 @@
 import type { Processor } from 'bullmq';
 import { appConfig } from '../config/env.js';
+import { getBaseQueueName } from '../jobs/queues.js';
 import { evaluateRedisConnectionBudget, startRetentionJob, startWorkerSignals } from '../scale/index.js';
 import { logger } from '../shared/logger.js';
 import { createWorkerRuntime } from './factory.js';
 
 const DEFAULT_QUEUE_NAME = 'default-io';
+const DEFAULT_PRIORITIES = ['high', 'default', 'low'] as const;
+const DEFAULT_WORKLOADS = ['io-bound', 'cpu-heavy'] as const;
 
 const noopProcessor: Processor = async (job) => {
   logger.info({ queue: job.queueName, jobId: job.id, jobName: job.name }, 'processing job');
@@ -12,19 +15,33 @@ const noopProcessor: Processor = async (job) => {
 };
 
 export async function startWorkerRuntime(queueName = DEFAULT_QUEUE_NAME, processor: Processor = noopProcessor) {
-  createWorkerRuntime({
-    queueName,
-    processor,
-    mode: 'parallel',
-  });
+  await startWorkerRuntimes([queueName], processor);
+}
 
-  evaluateRedisConnectionBudget('worker', 2);
+export function getDefaultWorkerQueues(): string[] {
+  return DEFAULT_PRIORITIES.flatMap((priority) =>
+    DEFAULT_WORKLOADS.map((workload) => getBaseQueueName(priority, workload)),
+  );
+}
 
-  const signals = startWorkerSignals(queueName);
+export async function startWorkerRuntimes(queueNames: string[], processor: Processor = noopProcessor) {
+  const uniqueQueueNames = Array.from(new Set(queueNames));
+
+  for (const queueName of uniqueQueueNames) {
+    createWorkerRuntime({
+      queueName,
+      processor,
+      mode: 'parallel',
+    });
+  }
+
+  evaluateRedisConnectionBudget('worker', uniqueQueueNames.length * 2);
+
+  const signals = uniqueQueueNames.map((queueName) => startWorkerSignals(queueName));
   const retention = startRetentionJob();
 
   const stopBackground = async () => {
-    await signals.stop();
+    await Promise.all(signals.map(async (signal) => signal.stop()));
     retention.stop();
   };
 
@@ -36,5 +53,5 @@ export async function startWorkerRuntime(queueName = DEFAULT_QUEUE_NAME, process
     void stopBackground();
   });
 
-  logger.info({ queue: queueName, scaleSignalIntervalMs: appConfig.scaleSignalIntervalMs }, 'worker started');
+  logger.info({ queues: uniqueQueueNames, scaleSignalIntervalMs: appConfig.scaleSignalIntervalMs }, 'workers started');
 }

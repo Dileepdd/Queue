@@ -1,4 +1,6 @@
 import { DelayedError, QueueEvents, Worker } from 'bullmq';
+import { randomUUID } from 'node:crypto';
+import { Redis } from 'ioredis';
 import { appConfig } from '../config/env.js';
 import { createWorkerOptions } from '../config/queue.js';
 import { createRedisConnectionOptions } from '../config/redis.js';
@@ -16,6 +18,8 @@ import { upsertJobStatus } from '../status/index.js';
 import type { JobName } from '../jobs/types.js';
 import type { JobProcessor, QueueJob, WorkerFactoryOptions, WorkerMode } from './types.js';
 import { recordFailureAndCheckStorm } from './retry-safeguard.js';
+
+const SEQUENTIAL_LOCK_TTL_MS = 5 * 60 * 1000;
 
 function resolveConcurrency(mode: WorkerMode, requested?: number): number {
   if (mode === 'sequential') {
@@ -68,8 +72,44 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
     workerOptions.limiter = options.rateLimiter;
   }
 
+  const sequentialLockRedis = new Redis(appConfig.redisUrl, {
+    username: appConfig.redisUsername,
+    password: appConfig.redisPassword,
+    enableReadyCheck: true,
+    maxRetriesPerRequest: null,
+    connectTimeout: 10000,
+    tls: appConfig.redisTls ? {} : undefined,
+    connectionName: `${appConfig.serviceName}:worker-sequential-lock`,
+  });
+
   const wrappedProcessor: JobProcessor = async (job, token) => {
     const envelope = validateJobEnvelope(job.data);
+    let sequentialLockKey: string | undefined;
+    let sequentialLockToken: string | undefined;
+
+    // parallel: current behavior using queue worker concurrency
+    // sequential: acquire distributed lock per partition to force one-by-one processing
+    if (envelope.executionMode === 'sequential') {
+      const partitionKey = envelope.metadata.partitionKey ?? envelope.metadata.tenantId;
+      sequentialLockKey = `seq-lock:${options.queueName}:${partitionKey}`;
+      sequentialLockToken = randomUUID();
+
+      const lockResult = await sequentialLockRedis.set(
+        sequentialLockKey,
+        sequentialLockToken,
+        'PX',
+        SEQUENTIAL_LOCK_TTL_MS,
+        'NX',
+      );
+
+      if (lockResult !== 'OK') {
+        const retryAt = Date.now() + Math.max(250, appConfig.queueBackoffMs);
+        await job.moveToDelayed(retryAt, token ?? job.token);
+        throw new DelayedError();
+      }
+    }
+
+    try {
     const claim = await claimIdempotency(envelope.metadata.tenantId, envelope.metadata.idempotencyKey);
 
     if (claim.state === 'duplicate-completed') {
@@ -132,6 +172,14 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
         errorSummary: asError.message,
       });
       throw error;
+    }
+    } finally {
+      if (sequentialLockKey && sequentialLockToken) {
+        const current = await sequentialLockRedis.get(sequentialLockKey);
+        if (current === sequentialLockToken) {
+          await sequentialLockRedis.del(sequentialLockKey);
+        }
+      }
     }
   };
 
@@ -204,6 +252,10 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
   });
 
   registerWorkerShutdown(worker, queueEvents);
+
+  worker.on('closed', () => {
+    void sequentialLockRedis.quit();
+  });
 
   logger.info({ queue: options.queueName, mode, concurrency }, 'worker runtime created');
 

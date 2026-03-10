@@ -1,3 +1,3 @@
-import { startWorkerRuntime } from './worker/runtime.js';
+import { getDefaultWorkerQueues, startWorkerRuntimes } from './worker/runtime.js';
 
-void startWorkerRuntime();
+void startWorkerRuntimes(getDefaultWorkerQueues());

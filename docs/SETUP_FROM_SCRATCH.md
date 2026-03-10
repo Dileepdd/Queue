@@ -224,7 +224,7 @@ npm.cmd run dev:worker
 Expected behavior:
 
 - Producer listens on `PORT` (default `3000`)
-- Worker logs `worker started`
+- Worker logs `workers started` with queue list (`high/default/low` x `io/cpu`)
 
 ## 8. Quick Validation
 
