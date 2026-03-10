@@ -43,7 +43,7 @@ export function getShardIndex(partitionKey: string, shardCount: number): number 
 }
 
 export function withShardSuffix(baseQueueName: string, shardIndex: number): string {
-  return `${baseQueueName}:shard-${shardIndex}`;
+  return `${baseQueueName}-shard-${shardIndex}`;
 }
 
 export function resolveQueueName(input: QueueRouteInput): string {

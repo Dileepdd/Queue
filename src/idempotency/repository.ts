@@ -5,7 +5,7 @@ import { logger } from '../shared/logger.js';
 export type ClaimState =
   | { state: 'claimed' }
   | { state: 'duplicate-completed'; result: unknown }
-  | { state: 'busy' };
+  | { state: 'busy'; retryAtMs?: number };
 
 const LOCK_SECONDS = 5 * 60;
 
@@ -82,7 +82,12 @@ export async function claimIdempotency(tenantId: string, idempotencyKey: string)
     logger.warn({ tenantId, elapsedMs }, 'idempotency busy-path latency threshold exceeded');
   }
 
-  return { state: 'busy' };
+  const retryAtMs = row.locked_until ? Date.parse(row.locked_until) : undefined;
+  const hasRetryAt = retryAtMs !== undefined && Number.isFinite(retryAtMs);
+  return {
+    state: 'busy',
+    ...(hasRetryAt ? { retryAtMs } : {}),
+  };
 }
 
 export async function markIdempotencyCompleted(tenantId: string, idempotencyKey: string, result: unknown): Promise<void> {

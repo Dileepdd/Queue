@@ -2,7 +2,7 @@
 
 ## Deploy
 
-1. Apply DB migrations.
+1. Apply DB migrations in order: `001_reliability_core.sql`, `002_client_hmac_auth.sql`, `003_bearer_token_hash.sql`.
 2. Deploy producer.
 3. Deploy workers.
 4. Verify health endpoint and worker startup logs.

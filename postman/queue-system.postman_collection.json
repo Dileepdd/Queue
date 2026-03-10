@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Queue System API",
-    "description": "Collection for producer endpoints: health, enqueue jobs, and dead-letter reprocess.",
+    "description": "Complete collection for producer APIs: health, admin key lifecycle, tenant job APIs, and dead-letter reprocess.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -10,12 +10,88 @@
       "value": "http://localhost:3000"
     },
     {
+      "key": "tenantId",
+      "value": "tenant1"
+    },
+    {
+      "key": "uniqueId",
+      "value": "user-123"
+    },
+    {
       "key": "deadLetterId",
       "value": "1"
     },
     {
-      "key": "tenantId",
+      "key": "enqueueDelayMs",
+      "value": "0"
+    },
+    {
+      "key": "retryCount",
+      "value": "3"
+    },
+    {
+      "key": "shardCount",
+      "value": "1"
+    },
+    {
+      "key": "queryJobId",
+      "value": ""
+    },
+    {
+      "key": "jobsLimit",
+      "value": "50"
+    },
+    {
+      "key": "jobsStatus",
+      "value": ""
+    },
+    {
+      "key": "jobsName",
+      "value": ""
+    },
+    {
+      "key": "jobsCursor",
+      "value": ""
+    },
+    {
+      "key": "accessKeyId",
+      "value": "client_demo_key_001"
+    },
+    {
+      "key": "secretKey",
+      "value": "replace-with-strong-secret"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": "replace-with-strong-admin-token"
+    },
+    {
+      "key": "adminKeyId",
+      "value": "client_demo_key_001"
+    },
+    {
+      "key": "newClientName",
+      "value": "Demo Client From API"
+    },
+    {
+      "key": "newTenantId",
       "value": "tenant1"
+    },
+    {
+      "key": "xTimestamp",
+      "value": ""
+    },
+    {
+      "key": "xNonce",
+      "value": ""
+    },
+    {
+      "key": "xSignature",
+      "value": ""
     }
   ],
   "item": [
@@ -32,106 +108,687 @@
           "path": [
             "health"
           ]
-        }
-      }
-    },
-    {
-      "name": "Enqueue Email (Immediate)",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"job\": {\n    \"name\": \"email.send\",\n    \"metadata\": {\n      \"idempotencyKey\": \"{{tenantId}}:email.send:user123:send:v1-{{$timestamp}}\",\n      \"correlationId\": \"corr-email-{{$timestamp}}\",\n      \"requestedAt\": \"{{$isoTimestamp}}\",\n      \"tenantId\": \"{{tenantId}}\",\n      \"schemaVersion\": 1,\n      \"priority\": \"default\",\n      \"workload\": \"io-bound\"\n    },\n    \"payload\": {\n      \"to\": \"user@example.com\",\n      \"subject\": \"Welcome\",\n      \"body\": \"Hello from queue system\"\n    }\n  }\n}"
         },
-        "url": {
-          "raw": "{{baseUrl}}/jobs",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "jobs"
-          ]
+        "description": "Checks if producer service is reachable. Expected 200 response: {\"ok\":true,\"service\":\"producer\"}."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Health returns 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});"
+            ]
+          }
         }
-      }
+      ]
     },
     {
-      "name": "Enqueue Report (Delayed)",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"job\": {\n    \"name\": \"report.generate\",\n    \"metadata\": {\n      \"idempotencyKey\": \"{{tenantId}}:report.generate:report42:v1-{{$timestamp}}\",\n      \"correlationId\": \"corr-report-{{$timestamp}}\",\n      \"requestedAt\": \"{{$isoTimestamp}}\",\n      \"tenantId\": \"{{tenantId}}\",\n      \"schemaVersion\": 1,\n      \"priority\": \"default\",\n      \"workload\": \"cpu-heavy\"\n    },\n    \"payload\": {\n      \"reportId\": \"report-42\",\n      \"format\": \"csv\"\n    }\n  },\n  \"delayMs\": 5000\n}"
+      "name": "Admin",
+      "item": [
+        {
+          "name": "List API Keys",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "keys"
+              ]
+            },
+            "description": "Lists API keys. Optional filters supported as query params: tenantId, status."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('List keys returns 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
         },
-        "url": {
-          "raw": "{{baseUrl}}/jobs",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "jobs"
+        {
+          "name": "Create API Key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenantId\": \"{{newTenantId}}\",\n  \"clientName\": \"{{newClientName}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "keys"
+              ]
+            },
+            "description": "Creates a new client API key and returns the generated secret once (stored server-side as a token hash)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Create key returns 201', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "const responseJson = pm.response.json();",
+                  "if (responseJson.keyId) {",
+                  "  pm.environment.set('accessKeyId', responseJson.keyId);",
+                  "  pm.environment.set('adminKeyId', responseJson.keyId);",
+                  "}",
+                  "if (responseJson.secretValue) {",
+                  "  pm.environment.set('secretKey', responseJson.secretValue);",
+                  "  pm.environment.set('accessToken', responseJson.secretValue);",
+                  "}",
+                  "if (responseJson.tenantId) {",
+                  "  pm.environment.set('tenantId', responseJson.tenantId);",
+                  "}",
+                  "",
+                  "pm.test('Create key returns keyId and secretValue', function () {",
+                  "  pm.expect(responseJson).to.have.property('keyId');",
+                  "  pm.expect(responseJson).to.have.property('secretValue');",
+                  "});"
+                ]
+              }
+            }
           ]
-        }
-      }
-    },
-    {
-      "name": "Enqueue Webhook (Sharded)",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"job\": {\n    \"name\": \"webhook.dispatch\",\n    \"metadata\": {\n      \"idempotencyKey\": \"{{tenantId}}:webhook.dispatch:event123:v1-{{$timestamp}}\",\n      \"correlationId\": \"corr-webhook-{{$timestamp}}\",\n      \"requestedAt\": \"{{$isoTimestamp}}\",\n      \"tenantId\": \"{{tenantId}}\",\n      \"schemaVersion\": 1,\n      \"priority\": \"high\",\n      \"workload\": \"io-bound\",\n      \"partitionKey\": \"tenant1-key\"\n    },\n    \"payload\": {\n      \"endpoint\": \"https://httpbin.org/post\",\n      \"eventType\": \"user.created\",\n      \"data\": {\n        \"userId\": \"u-123\",\n        \"email\": \"user@example.com\"\n      }\n    }\n  },\n  \"shardCount\": 4\n}"
         },
-        "url": {
-          "raw": "{{baseUrl}}/jobs",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "jobs"
+        {
+          "name": "Rotate API Key Secret",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/keys/{{adminKeyId}}/rotate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "keys",
+                "{{adminKeyId}}",
+                "rotate"
+              ]
+            },
+            "description": "Rotates secret for an existing API key id and returns new secret once (stored server-side as a token hash)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Rotate key returns 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const responseJson = pm.response.json();",
+                  "if (responseJson.keyId) {",
+                  "  pm.environment.set('adminKeyId', responseJson.keyId);",
+                  "  pm.environment.set('accessKeyId', responseJson.keyId);",
+                  "}",
+                  "if (responseJson.secretValue) {",
+                  "  pm.environment.set('secretKey', responseJson.secretValue);",
+                  "  pm.environment.set('accessToken', responseJson.secretValue);",
+                  "}",
+                  "",
+                  "pm.test('Rotate key returns new secretValue', function () {",
+                  "  pm.expect(responseJson).to.have.property('secretValue');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoke API Key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-Token",
+                "value": "{{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/keys/{{adminKeyId}}/revoke",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "keys",
+                "{{adminKeyId}}",
+                "revoke"
+              ]
+            },
+            "description": "Revokes an API key so HMAC auth calls are rejected for that key."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Revoke key returns 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const responseJson = pm.response.json();",
+                  "pm.test('Revoke response has revoked=true', function () {",
+                  "  pm.expect(responseJson.revoked).to.eql(true);",
+                  "});",
+                  "",
+                  "const currentAccessKeyId = pm.environment.get('accessKeyId');",
+                  "if (responseJson.keyId && currentAccessKeyId && responseJson.keyId === currentAccessKeyId) {",
+                  "  pm.environment.unset('secretKey');",
+                  "  pm.environment.unset('accessToken');",
+                  "}"
+                ]
+              }
+            }
           ]
         }
-      }
+      ]
     },
     {
-      "name": "Reprocess Dead Letter",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
+      "name": "Jobs",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const accessKeyId = pm.variables.get('accessKeyId');",
+              "const secretKey = pm.variables.get('secretKey');",
+              "const accessToken = pm.variables.get('accessToken');",
+              "",
+              "if (accessToken && accessToken.trim()) {",
+              "  pm.request.headers.upsert({ key: 'Authorization', value: `Bearer ${accessToken.trim()}` });",
+              "  pm.request.headers.remove('X-Access-Key-Id');",
+              "  pm.request.headers.remove('X-Timestamp');",
+              "  pm.request.headers.remove('X-Nonce');",
+              "  pm.request.headers.remove('X-Signature');",
+              "  return;",
+              "}",
+              "",
+              "if (!accessKeyId || !secretKey) {",
+              "  throw new Error('Missing accessKeyId/secretKey variables for HMAC signing');",
+              "}",
+              "",
+              "const resolvedAccessKeyId = pm.variables.replaceIn('{{accessKeyId}}');",
+              "if (!resolvedAccessKeyId || resolvedAccessKeyId.includes('{{')) {",
+              "  throw new Error('accessKeyId is unresolved. Set it in Postman environment or collection variables.');",
+              "}",
+              "",
+              "const timestampMs = String(Date.now());",
+              "const nonce = `n-${timestampMs}-${Math.random().toString(16).slice(2, 10)}`;",
+              "const method = pm.request.method.toUpperCase();",
+              "const pathWithQuery = pm.request.url.getPathWithQuery();",
+              "",
+              "let rawBody = '';",
+              "if (pm.request.body && pm.request.body.mode === 'raw') {",
+              "  rawBody = pm.variables.replaceIn(pm.request.body.raw || '');",
+              "}",
+              "",
+              "const bodyHash = CryptoJS.SHA256(rawBody).toString(CryptoJS.enc.Hex);",
+              "const canonical = [method, pathWithQuery, timestampMs, nonce, bodyHash].join('\\n');",
+              "const signature = CryptoJS.HmacSHA256(canonical, secretKey).toString(CryptoJS.enc.Hex);",
+              "",
+              "pm.environment.set('xTimestamp', timestampMs);",
+              "pm.environment.set('xNonce', nonce);",
+              "pm.environment.set('xSignature', signature);",
+              "",
+              "pm.request.headers.upsert({ key: 'X-Access-Key-Id', value: resolvedAccessKeyId });",
+              "pm.request.headers.upsert({ key: 'X-Timestamp', value: timestampMs });",
+              "pm.request.headers.upsert({ key: 'X-Nonce', value: nonce });",
+              "pm.request.headers.upsert({ key: 'X-Signature', value: signature });"
+            ]
           }
-        ],
-        "url": {
-          "raw": "{{baseUrl}}/dead-letter/{{deadLetterId}}/reprocess",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "dead-letter",
-            "{{deadLetterId}}",
-            "reprocess"
+        }
+      ],
+      "item": [
+        {
+          "name": "List Jobs (Tenant Scoped)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Access-Key-Id",
+                "value": "{{accessKeyId}}"
+              },
+              {
+                "key": "X-Timestamp",
+                "value": "{{xTimestamp}}"
+              },
+              {
+                "key": "X-Nonce",
+                "value": "{{xNonce}}"
+              },
+              {
+                "key": "X-Signature",
+                "value": "{{xSignature}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs?status={{jobsStatus}}&jobName={{jobsName}}&cursor={{jobsCursor}}&limit={{jobsLimit}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "{{jobsStatus}}"
+                },
+                {
+                  "key": "jobName",
+                  "value": "{{jobsName}}"
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{jobsCursor}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "{{jobsLimit}}"
+                }
+              ]
+            },
+            "description": "Lists tenant jobs with optional filters and cursor pagination."
+          }
+        },
+        {
+          "name": "Get Job By Id (Tenant Scoped)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Access-Key-Id",
+                "value": "{{accessKeyId}}"
+              },
+              {
+                "key": "X-Timestamp",
+                "value": "{{xTimestamp}}"
+              },
+              {
+                "key": "X-Nonce",
+                "value": "{{xNonce}}"
+              },
+              {
+                "key": "X-Signature",
+                "value": "{{xSignature}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{queryJobId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "{{queryJobId}}"
+              ]
+            },
+            "description": "Fetches a single tenant job by jobId."
+          }
+        },
+        {
+          "name": "Get Job Timeline (Tenant Scoped)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Access-Key-Id",
+                "value": "{{accessKeyId}}"
+              },
+              {
+                "key": "X-Timestamp",
+                "value": "{{xTimestamp}}"
+              },
+              {
+                "key": "X-Nonce",
+                "value": "{{xNonce}}"
+              },
+              {
+                "key": "X-Signature",
+                "value": "{{xSignature}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{queryJobId}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "{{queryJobId}}",
+                "events"
+              ]
+            },
+            "description": "Returns ordered status timeline and attempt summary for one tenant job."
+          }
+        },
+        {
+          "name": "Enqueue Webhook (Immediate)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Access-Key-Id",
+                "value": "{{accessKeyId}}"
+              },
+              {
+                "key": "X-Timestamp",
+                "value": "{{xTimestamp}}"
+              },
+              {
+                "key": "X-Nonce",
+                "value": "{{xNonce}}"
+              },
+              {
+                "key": "X-Signature",
+                "value": "{{xSignature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uniqueId\": \"{{uniqueId}}\",\n  \"job\": {\n    \"name\": \"webhook.dispatch\",\n    \"payload\": {\n      \"endpoint\": \"https://httpbin.org/post\",\n      \"method\": \"POST\",\n      \"eventType\": \"user.created\",\n      \"headers\": {\n        \"X-Webhook-Source\": \"queue-system\"\n      },\n      \"data\": {\n        \"userId\": \"u-123\",\n        \"email\": \"user@example.com\"\n      }\n    }\n  },\n  \"delayMs\": {{enqueueDelayMs}},\n  \"retryCount\": {{retryCount}}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs"
+              ]
+            },
+            "description": "Minimal enqueue request. Client knobs: delayMs and retryCount."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Enqueue accepted', function () {",
+                  "  pm.response.to.have.status(202);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Enqueue Webhook (Delayed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Access-Key-Id",
+                "value": "{{accessKeyId}}"
+              },
+              {
+                "key": "X-Timestamp",
+                "value": "{{xTimestamp}}"
+              },
+              {
+                "key": "X-Nonce",
+                "value": "{{xNonce}}"
+              },
+              {
+                "key": "X-Signature",
+                "value": "{{xSignature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uniqueId\": \"{{uniqueId}}\",\n  \"job\": {\n    \"name\": \"webhook.dispatch\",\n    \"payload\": {\n      \"endpoint\": \"https://httpbin.org/post\",\n      \"method\": \"POST\",\n      \"eventType\": \"user.updated\",\n      \"headers\": {\n        \"X-Webhook-Source\": \"queue-system\"\n      },\n      \"data\": {\n        \"userId\": \"u-456\",\n        \"email\": \"updated@example.com\"\n      }\n    }\n  },\n  \"delayMs\": 5000,\n  \"retryCount\": {{retryCount}}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs"
+              ]
+            },
+            "description": "Delayed enqueue example with explicit retryCount for this job."
+          }
+        },
+        {
+          "name": "Enqueue Webhook (Sharded)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Access-Key-Id",
+                "value": "{{accessKeyId}}"
+              },
+              {
+                "key": "X-Timestamp",
+                "value": "{{xTimestamp}}"
+              },
+              {
+                "key": "X-Nonce",
+                "value": "{{xNonce}}"
+              },
+              {
+                "key": "X-Signature",
+                "value": "{{xSignature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uniqueId\": \"{{uniqueId}}\",\n  \"job\": {\n    \"name\": \"webhook.dispatch\",\n    \"payload\": {\n      \"endpoint\": \"https://httpbin.org/post\",\n      \"method\": \"POST\",\n      \"eventType\": \"user.created\",\n      \"data\": {\n        \"userId\": \"u-123\",\n        \"email\": \"user@example.com\"\n      }\n    }\n  },\n  \"delayMs\": {{enqueueDelayMs}},\n  \"shardCount\": 4\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs"
+              ]
+            },
+            "description": "Sharding example. shardCount splits traffic across queue shards; it is not retry count."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dead Letter",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const accessKeyId = pm.variables.get('accessKeyId');",
+              "const secretKey = pm.variables.get('secretKey');",
+              "const accessToken = pm.variables.get('accessToken');",
+              "",
+              "if (accessToken && accessToken.trim()) {",
+              "  pm.request.headers.upsert({ key: 'Authorization', value: `Bearer ${accessToken.trim()}` });",
+              "  pm.request.headers.remove('X-Access-Key-Id');",
+              "  pm.request.headers.remove('X-Timestamp');",
+              "  pm.request.headers.remove('X-Nonce');",
+              "  pm.request.headers.remove('X-Signature');",
+              "  return;",
+              "}",
+              "",
+              "if (!accessKeyId || !secretKey) {",
+              "  throw new Error('Missing accessKeyId/secretKey variables for HMAC signing');",
+              "}",
+              "",
+              "const resolvedAccessKeyId = pm.variables.replaceIn('{{accessKeyId}}');",
+              "if (!resolvedAccessKeyId || resolvedAccessKeyId.includes('{{')) {",
+              "  throw new Error('accessKeyId is unresolved. Set it in Postman environment or collection variables.');",
+              "}",
+              "",
+              "const timestampMs = String(Date.now());",
+              "const nonce = `n-${timestampMs}-${Math.random().toString(16).slice(2, 10)}`;",
+              "const method = pm.request.method.toUpperCase();",
+              "const pathWithQuery = pm.request.url.getPathWithQuery();",
+              "",
+              "let rawBody = '';",
+              "if (pm.request.body && pm.request.body.mode === 'raw') {",
+              "  rawBody = pm.variables.replaceIn(pm.request.body.raw || '');",
+              "}",
+              "",
+              "const bodyHash = CryptoJS.SHA256(rawBody).toString(CryptoJS.enc.Hex);",
+              "const canonical = [method, pathWithQuery, timestampMs, nonce, bodyHash].join('\\n');",
+              "const signature = CryptoJS.HmacSHA256(canonical, secretKey).toString(CryptoJS.enc.Hex);",
+              "",
+              "pm.environment.set('xTimestamp', timestampMs);",
+              "pm.environment.set('xNonce', nonce);",
+              "pm.environment.set('xSignature', signature);",
+              "",
+              "pm.request.headers.upsert({ key: 'X-Access-Key-Id', value: resolvedAccessKeyId });",
+              "pm.request.headers.upsert({ key: 'X-Timestamp', value: timestampMs });",
+              "pm.request.headers.upsert({ key: 'X-Nonce', value: nonce });",
+              "pm.request.headers.upsert({ key: 'X-Signature', value: signature });"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "Reprocess Dead Letter",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "X-Access-Key-Id",
+                "value": "{{accessKeyId}}"
+              },
+              {
+                "key": "X-Timestamp",
+                "value": "{{xTimestamp}}"
+              },
+              {
+                "key": "X-Nonce",
+                "value": "{{xNonce}}"
+              },
+              {
+                "key": "X-Signature",
+                "value": "{{xSignature}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dead-letter/{{deadLetterId}}/reprocess",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dead-letter",
+                "{{deadLetterId}}",
+                "reprocess"
+              ]
+            },
+            "description": "Requeues an existing dead-letter item by id."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Reprocess accepted', function () {",
+                  "  pm.response.to.have.status(202);",
+                  "});"
+                ]
+              }
+            }
           ]
         }
-      }
+      ]
     }
   ]
 }

@@ -6,8 +6,22 @@ Run these in order to complete validation and rollout readiness.
 
 - Producer running on `http://localhost:3000`
 - Worker running (`npm.cmd run dev:worker`)
-- Postgres migration `src/infra/migrations/001_reliability_core.sql` applied
+- Postgres migrations applied in order:
+	- `src/infra/migrations/001_reliability_core.sql`
+	- `src/infra/migrations/002_client_hmac_auth.sql`
+	- `src/infra/migrations/003_bearer_token_hash.sql`
 - `.env` populated and reachable cloud Redis/Postgres
+- Validation auth token set for scripts:
+	- `VALIDATION_ACCESS_TOKEN=<client secretValue>`
+	- Optional: `VALIDATION_BASE_URL=http://localhost:3000`
+
+Quick way to generate a token (admin API):
+
+```powershell
+$adminToken = (Select-String -Path .env -Pattern '^ADMIN_API_TOKEN=').Line.Split('=',2)[1]
+$created = Invoke-RestMethod -Method Post -Uri 'http://localhost:3000/admin/keys' -Headers @{ 'X-Admin-Token' = $adminToken } -ContentType 'application/json' -Body (@{ tenantId='tenant1'; clientName='Validation Runner' } | ConvertTo-Json)
+$env:VALIDATION_ACCESS_TOKEN = $created.secretValue
+```
 
 ## 1) Crash Recovery Test
 

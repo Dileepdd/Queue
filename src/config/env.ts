@@ -3,6 +3,27 @@ import { z } from 'zod';
 
 dotenv.config();
 
+const envBoolean = (defaultValue: boolean) =>
+  z
+    .union([z.boolean(), z.string()])
+    .transform((value) => {
+      if (typeof value === 'boolean') {
+        return value;
+      }
+
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') {
+        return true;
+      }
+
+      if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') {
+        return false;
+      }
+
+      throw new Error(`Invalid boolean value: ${value}`);
+    })
+    .default(defaultValue);
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   SERVICE_NAME: z.string().min(1).default('queue-system'),
@@ -14,11 +35,11 @@ const envSchema = z.object({
   REDIS_PORT: z.coerce.number().int().min(1).max(65535).optional(),
   REDIS_USERNAME: z.string().min(1).optional(),
   REDIS_PASSWORD: z.string().min(1).optional(),
-  REDIS_TLS: z.coerce.boolean().default(false),
+  REDIS_TLS: envBoolean(false),
 
   DATABASE_URL: z.string().min(1),
-  DB_SSL: z.coerce.boolean().default(true),
-  DB_SSL_REJECT_UNAUTHORIZED: z.coerce.boolean().default(false),
+  DB_SSL: envBoolean(true),
+  DB_SSL_REJECT_UNAUTHORIZED: envBoolean(false),
   DB_POOL_MAX: z.coerce.number().int().min(1).max(200).default(20),
   DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(100).default(5000),
 
@@ -42,11 +63,17 @@ const envSchema = z.object({
   REDIS_CONNECTION_BUDGET_WORKER: z.coerce.number().int().min(1).default(100),
   DB_IDEMPOTENCY_CLAIM_WARN_MS: z.coerce.number().int().min(1).default(150),
 
-  RETENTION_ENABLED: z.coerce.boolean().default(true),
+  RETENTION_ENABLED: envBoolean(true),
   RETENTION_INTERVAL_MS: z.coerce.number().int().min(60000).default(3600000),
   RETENTION_IDEMPOTENCY_DAYS: z.coerce.number().int().min(1).default(30),
   RETENTION_STATUS_EVENT_DAYS: z.coerce.number().int().min(1).default(30),
   RETENTION_DEAD_LETTER_DAYS: z.coerce.number().int().min(1).default(90),
+
+  AUTH_HMAC_REQUIRED: envBoolean(false),
+  AUTH_BEARER_ENABLED: envBoolean(true),
+  AUTH_CLOCK_SKEW_MS: z.coerce.number().int().min(1000).default(300000),
+  AUTH_NONCE_TTL_MS: z.coerce.number().int().min(1000).default(300000),
+  ADMIN_API_TOKEN: z.string().default(''),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -100,6 +127,11 @@ export const appConfig = Object.freeze({
   retentionIdempotencyDays: parsed.data.RETENTION_IDEMPOTENCY_DAYS,
   retentionStatusEventDays: parsed.data.RETENTION_STATUS_EVENT_DAYS,
   retentionDeadLetterDays: parsed.data.RETENTION_DEAD_LETTER_DAYS,
+  authHmacRequired: parsed.data.AUTH_HMAC_REQUIRED,
+  authBearerEnabled: parsed.data.AUTH_BEARER_ENABLED,
+  authClockSkewMs: parsed.data.AUTH_CLOCK_SKEW_MS,
+  authNonceTtlMs: parsed.data.AUTH_NONCE_TTL_MS,
+  adminApiToken: parsed.data.ADMIN_API_TOKEN,
 });
 
 export type AppConfig = typeof appConfig;

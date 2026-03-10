@@ -10,8 +10,12 @@ import { assertTenantRateLimit } from './rate-limit.js';
 
 export interface EnqueueInput {
   job: unknown;
+  uniqueId?: string | undefined;
   delayMs?: number | undefined;
+  retryCount?: number | undefined;
   shardCount?: number | undefined;
+  tenantIdHint?: string | undefined;
+  skipAdmissionRateLimit?: boolean | undefined;
 }
 
 export interface EnqueueResult {
@@ -43,20 +47,62 @@ function buildGeneratedIdempotencyKey(jobObj: Record<string, unknown>): string {
   return `${tenantId}:${name}:${partitionKey}:auto:${randomUUID()}`;
 }
 
-function normalizeJobEnvelope(input: unknown): AnyJobEnvelope {
+function normalizeJobEnvelope(input: unknown, tenantIdHint?: string, uniqueId?: string): AnyJobEnvelope {
   const jobObj = asObject(input);
   const metadata = asObject(jobObj.metadata ?? {});
+
+  const tenantIdFromBody = typeof metadata.tenantId === 'string' && metadata.tenantId.trim().length > 0 ? metadata.tenantId.trim() : undefined;
+  if (tenantIdHint && tenantIdFromBody && tenantIdHint !== tenantIdFromBody) {
+    throw new AppError('Request tenantId does not match authenticated tenant', {
+      code: 'AUTH_TENANT_MISMATCH',
+      statusCode: 403,
+    });
+  }
+
+  const tenantId = tenantIdHint ?? tenantIdFromBody ?? 'public';
+  const jobName = typeof jobObj.name === 'string' ? jobObj.name : 'webhook.dispatch';
+  const partitionKeyFromMetadata = typeof metadata.partitionKey === 'string' && metadata.partitionKey.trim().length > 0 ? metadata.partitionKey.trim() : undefined;
+  const partitionKeyFromUnique = typeof uniqueId === 'string' && uniqueId.trim().length > 0 ? uniqueId.trim() : undefined;
+  const partitionKey = partitionKeyFromMetadata ?? partitionKeyFromUnique ?? tenantId;
 
   const idempotencyKey =
     typeof metadata.idempotencyKey === 'string' && metadata.idempotencyKey.length >= 8
       ? metadata.idempotencyKey
-      : buildGeneratedIdempotencyKey(jobObj);
+      : buildGeneratedIdempotencyKey({
+          ...jobObj,
+          name: jobName,
+          metadata: {
+            ...metadata,
+            tenantId,
+            partitionKey,
+          },
+        });
+
+  const correlationId =
+    typeof metadata.correlationId === 'string' && metadata.correlationId.length >= 8
+      ? metadata.correlationId
+      : `corr-${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+
+  const requestedAt =
+    typeof metadata.requestedAt === 'string' && metadata.requestedAt.trim().length > 0 ? metadata.requestedAt : new Date().toISOString();
+
+  const schemaVersion = typeof metadata.schemaVersion === 'number' ? metadata.schemaVersion : 1;
+  const priority = metadata.priority === 'high' || metadata.priority === 'default' || metadata.priority === 'low' ? metadata.priority : 'default';
+  const workload = metadata.workload === 'io-bound' || metadata.workload === 'cpu-heavy' ? metadata.workload : 'io-bound';
 
   const normalized = {
     ...jobObj,
+    name: jobName,
     metadata: {
       ...metadata,
       idempotencyKey,
+      correlationId,
+      requestedAt,
+      tenantId,
+      schemaVersion,
+      priority,
+      workload,
+      partitionKey,
     },
   };
 
@@ -104,11 +150,13 @@ async function assertQueueCapacity(queueName: string) {
 }
 
 export async function enqueueJob(input: EnqueueInput): Promise<EnqueueResult> {
-  const normalizedJob = normalizeJobEnvelope(input.job);
+  const normalizedJob = normalizeJobEnvelope(input.job, input.tenantIdHint, input.uniqueId);
   const delayMs = input.delayMs ?? 0;
   ensureWithinLimits(normalizedJob, delayMs);
 
-  assertTenantRateLimit(normalizedJob.metadata.tenantId);
+  if (!input.skipAdmissionRateLimit) {
+    assertTenantRateLimit(normalizedJob.metadata.tenantId);
+  }
 
   const queueRouteInput = {
     priority: normalizedJob.metadata.priority,
@@ -126,6 +174,7 @@ export async function enqueueJob(input: EnqueueInput): Promise<EnqueueResult> {
   const jobOptions: JobsOptions = {
     jobId: toBullSafeJobId(rawJobId),
     ...(delayMs > 0 ? { delay: delayMs } : {}),
+    ...(input.retryCount !== undefined ? { attempts: input.retryCount + 1 } : {}),
   };
 
   const enqueued = await queue.add(normalizedJob.name, normalizedJob, jobOptions);

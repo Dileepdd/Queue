@@ -1,6 +1,6 @@
 import type { QueuePriority, QueueWorkload } from './queues.js';
 
-export type JobName = 'email.send' | 'report.generate' | 'webhook.dispatch';
+export type JobName = 'webhook.dispatch';
 
 export interface JobMetadata {
   idempotencyKey: string;
@@ -13,32 +13,19 @@ export interface JobMetadata {
   partitionKey?: string | undefined;
 }
 
-export interface SendEmailPayload {
-  to: string;
-  subject: string;
-  body: string;
-}
-
-export interface GenerateReportPayload {
-  reportId: string;
-  format: 'csv' | 'pdf';
-}
-
 export interface DispatchWebhookPayload {
   endpoint: string;
+  method?: 'POST' | 'PUT' | 'PATCH';
+  headers?: Record<string, string> | undefined;
   eventType: string;
   data: Record<string, unknown>;
 }
 
 export interface JobPayloadMap {
-  'email.send': SendEmailPayload;
-  'report.generate': GenerateReportPayload;
   'webhook.dispatch': DispatchWebhookPayload;
 }
 
 export interface JobResultMap {
-  'email.send': { accepted: boolean };
-  'report.generate': { storageKey: string };
   'webhook.dispatch': { statusCode: number };
 }
 

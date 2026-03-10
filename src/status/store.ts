@@ -66,3 +66,196 @@ export async function upsertJobStatus(record: StatusRecord): Promise<void> {
     ],
   );
 }
+
+export interface JobStatusQuery {
+  tenantId: string;
+  status?: JobStatus;
+  jobName?: JobName;
+  updatedBefore?: string;
+  limit: number;
+}
+
+export interface JobStatusListResult {
+  items: StatusRecord[];
+  nextCursor?: string;
+}
+
+export interface JobStatusEventRecord {
+  id: number;
+  queue: string;
+  jobId: string;
+  jobName: JobName;
+  status: JobStatus;
+  metadata: JobMetadata;
+  errorSummary?: string;
+  createdAt: string;
+}
+
+export interface JobTimelineSummary {
+  totalEvents: number;
+  totalAttempts: number;
+  failedAttempts: number;
+  completedAt?: string;
+  deadLetteredAt?: string;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+}
+
+export interface JobTimelineResult {
+  jobId: string;
+  summary: JobTimelineSummary;
+  events: JobStatusEventRecord[];
+}
+
+export async function getJobStatusByJobId(tenantId: string, jobId: string): Promise<StatusRecord | undefined> {
+  const result = await getDbPool().query<{
+    queue: string;
+    job_id: string;
+    job_name: JobName;
+    status: JobStatus;
+    metadata_json: JobMetadata;
+    error_summary: string | null;
+    updated_at: Date;
+  }>(
+    `
+      SELECT queue, job_id, job_name, status, metadata_json, error_summary, updated_at
+      FROM job_status_current
+      WHERE tenant_id = $1
+        AND job_id = $2
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `,
+    [tenantId, jobId],
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    return undefined;
+  }
+
+  return {
+    queue: row.queue,
+    jobId: row.job_id,
+    jobName: row.job_name,
+    status: row.status,
+    metadata: row.metadata_json,
+    ...(row.error_summary ? { errorSummary: row.error_summary } : {}),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+export async function listJobStatuses(query: JobStatusQuery): Promise<JobStatusListResult> {
+  const params: Array<string | number> = [query.tenantId];
+  const clauses: string[] = ['tenant_id = $1'];
+
+  if (query.status) {
+    params.push(query.status);
+    clauses.push(`status = $${params.length}`);
+  }
+
+  if (query.jobName) {
+    params.push(query.jobName);
+    clauses.push(`job_name = $${params.length}`);
+  }
+
+  if (query.updatedBefore) {
+    params.push(query.updatedBefore);
+    clauses.push(`updated_at < $${params.length}::timestamptz`);
+  }
+
+  params.push(query.limit);
+
+  const whereSql = clauses.join(' AND ');
+  const result = await getDbPool().query<{
+    queue: string;
+    job_id: string;
+    job_name: JobName;
+    status: JobStatus;
+    metadata_json: JobMetadata;
+    error_summary: string | null;
+    updated_at: Date;
+  }>(
+    `
+      SELECT queue, job_id, job_name, status, metadata_json, error_summary, updated_at
+      FROM job_status_current
+      WHERE ${whereSql}
+      ORDER BY updated_at DESC
+      LIMIT $${params.length}
+    `,
+    params,
+  );
+
+  const items: StatusRecord[] = result.rows.map((row) => ({
+    queue: row.queue,
+    jobId: row.job_id,
+    jobName: row.job_name,
+    status: row.status,
+    metadata: row.metadata_json,
+    ...(row.error_summary ? { errorSummary: row.error_summary } : {}),
+    updatedAt: row.updated_at.toISOString(),
+  }));
+
+  const nextCursor = items.length === query.limit ? items[items.length - 1]?.updatedAt : undefined;
+  return {
+    items,
+    ...(nextCursor ? { nextCursor } : {}),
+  };
+}
+
+export async function getJobTimelineByJobId(tenantId: string, jobId: string): Promise<JobTimelineResult | undefined> {
+  const result = await getDbPool().query<{
+    id: string;
+    queue: string;
+    job_id: string;
+    job_name: JobName;
+    status: JobStatus;
+    metadata_json: JobMetadata;
+    error_summary: string | null;
+    created_at: Date;
+  }>(
+    `
+      SELECT id, queue, job_id, job_name, status, metadata_json, error_summary, created_at
+      FROM job_status_events
+      WHERE tenant_id = $1
+        AND job_id = $2
+      ORDER BY created_at ASC, id ASC
+    `,
+    [tenantId, jobId],
+  );
+
+  if (result.rows.length === 0) {
+    return undefined;
+  }
+
+  const events: JobStatusEventRecord[] = result.rows.map((row) => ({
+    id: Number(row.id),
+    queue: row.queue,
+    jobId: row.job_id,
+    jobName: row.job_name,
+    status: row.status,
+    metadata: row.metadata_json,
+    ...(row.error_summary ? { errorSummary: row.error_summary } : {}),
+    createdAt: row.created_at.toISOString(),
+  }));
+
+  const totalAttempts = events.filter((event) => event.status === 'active').length;
+  const failedAttempts = events.filter((event) => event.status === 'failed').length;
+  const completedAt = events.find((event) => event.status === 'completed')?.createdAt;
+  const deadLetteredAt = events.find((event) => event.status === 'dead-lettered')?.createdAt;
+  const firstSeenAt = events[0]?.createdAt;
+  const lastSeenAt = events[events.length - 1]?.createdAt;
+
+  return {
+    jobId,
+    summary: {
+      totalEvents: events.length,
+      totalAttempts,
+      failedAttempts,
+      ...(completedAt ? { completedAt } : {}),
+      ...(deadLetteredAt ? { deadLetteredAt } : {}),
+      ...(firstSeenAt ? { firstSeenAt } : {}),
+      ...(lastSeenAt ? { lastSeenAt } : {}),
+    },
+    events,
+  };
+}

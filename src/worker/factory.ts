@@ -1,4 +1,4 @@
-import { QueueEvents, Worker } from 'bullmq';
+import { DelayedError, QueueEvents, Worker } from 'bullmq';
 import { appConfig } from '../config/env.js';
 import { createWorkerOptions } from '../config/queue.js';
 import { createRedisConnectionOptions } from '../config/redis.js';
@@ -68,7 +68,7 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
     workerOptions.limiter = options.rateLimiter;
   }
 
-  const wrappedProcessor: JobProcessor = async (job) => {
+  const wrappedProcessor: JobProcessor = async (job, token) => {
     const envelope = validateJobEnvelope(job.data);
     const claim = await claimIdempotency(envelope.metadata.tenantId, envelope.metadata.idempotencyKey);
 
@@ -85,11 +85,11 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
     }
 
     if (claim.state === 'busy') {
-      throw new AppError('Idempotency key is currently processing', {
-        code: 'IDEMPOTENCY_BUSY',
-        statusCode: 409,
-        retryable: true,
-      });
+      // Keep the same job pending while the idempotency lock is active, without burning attempts.
+      const minRetryAt = Date.now() + appConfig.queueBackoffMs;
+      const retryAt = claim.retryAtMs ? Math.max(claim.retryAtMs + 200, minRetryAt) : minRetryAt;
+      await job.moveToDelayed(retryAt, token ?? job.token);
+      throw new DelayedError();
     }
 
     await upsertJobStatus({
@@ -174,7 +174,7 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
         void insertDeadLetter({
           queue: options.queueName,
           jobId: job.id ?? 'unknown',
-          jobName: (job.name as JobName) ?? 'email.send',
+          jobName: (job.name as JobName) ?? 'webhook.dispatch',
           tenantId: metadataObj.tenantId ?? 'unknown-tenant',
           idempotencyKey: metadataObj.idempotencyKey ?? 'unknown-key',
           payload,

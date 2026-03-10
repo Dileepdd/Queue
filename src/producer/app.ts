@@ -1,12 +1,54 @@
 import express from 'express';
-import { ZodError } from 'zod';
+import { ZodError, z } from 'zod';
+import { requireAdminToken } from '../admin/middleware.js';
+import { createApiKey, listApiKeys, revokeApiKey, rotateApiKey } from '../admin/service.js';
+import { createApiKeySchema, listApiKeysQuerySchema } from '../admin/schemas.js';
+import { requireClientHmacAuth } from '../auth/middleware.js';
 import { reprocessDeadLetter } from '../dead-letter/service.js';
 import { closeDbPool } from '../infra/db.js';
 import { AppError } from '../shared/errors.js';
 import { logger } from '../shared/logger.js';
+import { getJobStatusByJobId, getJobTimelineByJobId, listJobStatuses } from '../status/index.js';
 import { enqueueJob } from './enqueue-service.js';
 import { closeAllQueues } from './queue-registry.js';
-import { enqueueRequestSchema } from './schemas.js';
+import { bulkEnqueueRequestSchema, enqueueRequestSchema } from './schemas.js';
+
+const optionalQueryString = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((value) => {
+    if (typeof value !== 'string') {
+      return value;
+    }
+
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : trimmed;
+  }, schema.optional());
+
+const jobListQuerySchema = z.object({
+  status: optionalQueryString(z.enum(['queued', 'active', 'completed', 'failed', 'dead-lettered', 'duplicate'])),
+  jobName: optionalQueryString(z.enum(['webhook.dispatch'])),
+  cursor: optionalQueryString(z.string().datetime()),
+  limit: z
+    .preprocess((value) => {
+      if (typeof value !== 'string') {
+        return value;
+      }
+      const trimmed = value.trim();
+      return trimmed === '' ? undefined : trimmed;
+    }, z.coerce.number().int().min(1).max(200).optional())
+    .default(50),
+});
+
+function getTenantIdFromAuth(res: express.Response): string {
+  const auth = res.locals.auth as { tenantId?: string } | undefined;
+  const tenantId = auth?.tenantId;
+  if (!tenantId) {
+    throw new AppError('Missing authenticated tenant context', {
+      code: 'AUTH_CONTEXT_MISSING',
+      statusCode: 401,
+    });
+  }
+  return tenantId;
+}
 
 function mapInfrastructureError(error: unknown): AppError | undefined {
   if (!error || typeof error !== 'object') {
@@ -44,19 +86,88 @@ function mapInfrastructureError(error: unknown): AppError | undefined {
 
 export function createProducerApp() {
   const app = express();
-  app.use(express.json({ limit: '256kb' }));
+  const clientAuth = requireClientHmacAuth();
+  const adminAuth = requireAdminToken();
+
+  app.use(
+    express.json({
+      limit: '25mb',
+      verify: (req, _res, buffer) => {
+        // Preserve raw bytes for request signature verification.
+        (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buffer);
+      },
+    }),
+  );
 
   app.get('/health', (_req, res) => {
     res.status(200).json({ ok: true, service: 'producer' });
   });
 
-  app.post('/jobs', async (req, res, next) => {
+  app.get('/admin/keys', adminAuth, async (req, res, next) => {
+    try {
+      const query = listApiKeysQuerySchema.parse(req.query);
+      const rows = await listApiKeys(query);
+      res.status(200).json({ items: rows });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/keys', adminAuth, async (req, res, next) => {
+    try {
+      const payload = createApiKeySchema.parse(req.body);
+      const created = await createApiKey(payload);
+      res.status(201).json(created);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/keys/:id/rotate', adminAuth, async (req, res, next) => {
+    try {
+      const keyId = req.params.id;
+      if (!keyId || !keyId.trim()) {
+        throw new AppError('Invalid API key id', {
+          code: 'ADMIN_INVALID_KEY_ID',
+          statusCode: 400,
+        });
+      }
+
+      const rotated = await rotateApiKey(keyId.trim());
+      res.status(200).json(rotated);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/keys/:id/revoke', adminAuth, async (req, res, next) => {
+    try {
+      const keyId = req.params.id;
+      if (!keyId || !keyId.trim()) {
+        throw new AppError('Invalid API key id', {
+          code: 'ADMIN_INVALID_KEY_ID',
+          statusCode: 400,
+        });
+      }
+
+      const revoked = await revokeApiKey(keyId.trim());
+      res.status(200).json(revoked);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/jobs', clientAuth, async (req, res, next) => {
     try {
       const parsed = enqueueRequestSchema.parse(req.body);
+      const authTenantId = (res.locals.auth as { tenantId?: string } | undefined)?.tenantId;
       const result = await enqueueJob({
         job: parsed.job,
+        ...(parsed.uniqueId !== undefined ? { uniqueId: parsed.uniqueId } : {}),
         ...(parsed.delayMs !== undefined ? { delayMs: parsed.delayMs } : {}),
+        ...(parsed.retryCount !== undefined ? { retryCount: parsed.retryCount } : {}),
         ...(parsed.shardCount !== undefined ? { shardCount: parsed.shardCount } : {}),
+        ...(authTenantId ? { tenantIdHint: authTenantId } : {}),
       });
 
       res.status(202).json({
@@ -71,7 +182,112 @@ export function createProducerApp() {
     }
   });
 
-  app.post('/dead-letter/:id/reprocess', async (req, res, next) => {
+  app.post('/jobs/bulk', clientAuth, async (req, res, next) => {
+    try {
+      const parsed = bulkEnqueueRequestSchema.parse(req.body);
+      const authTenantId = (res.locals.auth as { tenantId?: string } | undefined)?.tenantId;
+
+      const results: Array<{ index: number; queueName: string; jobId: string }> = [];
+      for (const [index, item] of parsed.items.entries()) {
+        const result = await enqueueJob({
+          job: item.job,
+          uniqueId: item.uniqueId ?? parsed.defaults?.uniqueId,
+          delayMs: item.delayMs ?? parsed.defaults?.delayMs,
+          retryCount: item.retryCount ?? parsed.defaults?.retryCount,
+          shardCount: item.shardCount ?? parsed.defaults?.shardCount,
+          ...(authTenantId ? { tenantIdHint: authTenantId } : {}),
+          skipAdmissionRateLimit: true,
+        });
+
+        results.push({
+          index,
+          queueName: result.queueName,
+          jobId: result.jobId,
+        });
+      }
+
+      res.status(202).json({
+        accepted: true,
+        totalEnqueued: results.length,
+        items: results,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/jobs/:jobId', clientAuth, async (req, res, next) => {
+    try {
+      const tenantId = getTenantIdFromAuth(res);
+      const jobId = req.params.jobId?.trim();
+
+      if (!jobId) {
+        throw new AppError('Invalid job id', {
+          code: 'INVALID_JOB_ID',
+          statusCode: 400,
+        });
+      }
+
+      const row = await getJobStatusByJobId(tenantId, jobId);
+      if (!row) {
+        throw new AppError('Job not found', {
+          code: 'JOB_NOT_FOUND',
+          statusCode: 404,
+        });
+      }
+
+      res.status(200).json(row);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/jobs/:jobId/events', clientAuth, async (req, res, next) => {
+    try {
+      const tenantId = getTenantIdFromAuth(res);
+      const jobId = req.params.jobId?.trim();
+
+      if (!jobId) {
+        throw new AppError('Invalid job id', {
+          code: 'INVALID_JOB_ID',
+          statusCode: 400,
+        });
+      }
+
+      const timeline = await getJobTimelineByJobId(tenantId, jobId);
+      if (!timeline) {
+        throw new AppError('Job not found', {
+          code: 'JOB_NOT_FOUND',
+          statusCode: 404,
+        });
+      }
+
+      res.status(200).json(timeline);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/jobs', clientAuth, async (req, res, next) => {
+    try {
+      const tenantId = getTenantIdFromAuth(res);
+      const parsed = jobListQuerySchema.parse(req.query);
+
+      const result = await listJobStatuses({
+        tenantId,
+        ...(parsed.status ? { status: parsed.status } : {}),
+        ...(parsed.jobName ? { jobName: parsed.jobName } : {}),
+        ...(parsed.cursor ? { updatedBefore: parsed.cursor } : {}),
+        limit: parsed.limit,
+      });
+
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/dead-letter/:id/reprocess', clientAuth, async (req, res, next) => {
     try {
       const deadLetterId = Number(req.params.id);
       if (!Number.isInteger(deadLetterId) || deadLetterId <= 0) {

@@ -119,7 +119,7 @@ Starvation prevention:
 
 Queue partitioning strategy:
 - Start with logical partitioning by queue class (priority + workload).
-- Add shard queues when hot spots appear: `queueName:shard-{0..N-1}` by stable hash (`tenantId` or `entityId`).
+- Add shard queues when hot spots appear: `queueName-shard-{0..N-1}` by stable hash (`tenantId` or `entityId`).
 - Keep ordering-sensitive workloads pinned to partition key.
 - Rebalance by increasing shard count only for saturated classes, not globally.
 

@@ -20,7 +20,7 @@ Track implementation progress here. Mark items as done as we complete them.
 
 ## 2) Queue model and contracts
 - [x] Implement queue isolation model (priority + workload)
-- [x] Implement queue partitioning strategy (`queue:shard-N`)
+- [x] Implement queue partitioning strategy (`queue-shard-N`)
 - [x] Implement typed job payload/result contracts
 - [x] Add runtime payload validation
 
@@ -49,7 +49,7 @@ Track implementation progress here. Mark items as done as we complete them.
 - [x] Add retention/archive jobs for old idempotency/status records
 
 ## 7) Validation and rollout
-- [ ] Run crash recovery tests
+- [x] Run crash recovery tests
 - [ ] Run Redis restart/failover tests
 - [x] Run duplicate delivery/idempotency tests
 - [ ] Run network partition tests

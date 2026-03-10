@@ -21,23 +21,30 @@ let fail = 0;
 const startedAt = Date.now();
 
 async function sendOne(i) {
-  const idem = `tenant1:email.send:user123:send:v1-load-${i}-${Date.now()}`;
+  const idem = `tenant1:webhook.dispatch:event:load-test:v1-load-${i}-${Date.now()}`;
   const body = {
     job: {
-      name: 'email.send',
+      name: 'webhook.dispatch',
       metadata: {
         idempotencyKey: idem,
         correlationId: `corr-load-${i}`,
         requestedAt: new Date().toISOString(),
         tenantId: 'tenant1',
         schemaVersion: 1,
-        priority: 'default',
+        priority: 'high',
         workload: 'io-bound',
       },
       payload: {
-        to: 'test@example.com',
-        subject: 'Load test',
-        body: `payload-${i}`,
+        method: 'POST',
+        endpoint: 'https://httpbin.org/post',
+        eventType: 'load.test',
+        headers: {
+          'X-Load-Test': 'true',
+        },
+        data: {
+          run: 'load-test',
+          index: i,
+        },
       },
     },
   };

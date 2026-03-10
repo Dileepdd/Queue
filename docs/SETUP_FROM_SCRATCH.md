@@ -90,17 +90,120 @@ Important tuning values currently used:
 
 ## 6. Run Database Migration
 
-Run `src/infra/migrations/001_reliability_core.sql` on your Postgres DB.
+Run these migration files on your Postgres DB in order:
+
+- `src/infra/migrations/001_reliability_core.sql`
+- `src/infra/migrations/002_client_hmac_auth.sql`
+- `src/infra/migrations/003_bearer_token_hash.sql`
 
 ### With `psql`
 
 ```powershell
 psql "$env:DATABASE_URL" -f src/infra/migrations/001_reliability_core.sql
+psql "$env:DATABASE_URL" -f src/infra/migrations/002_client_hmac_auth.sql
+psql "$env:DATABASE_URL" -f src/infra/migrations/003_bearer_token_hash.sql
 ```
 
 ### With cloud SQL editor
 
 Open `src/infra/migrations/001_reliability_core.sql`, copy/paste, execute once.
+Then execute `src/infra/migrations/002_client_hmac_auth.sql`.
+Then execute `src/infra/migrations/003_bearer_token_hash.sql`.
+
+## 6.1 Optional: Enable Client HMAC Auth
+
+By default, auth is disabled (`AUTH_HMAC_REQUIRED=false`).
+
+To enforce client authentication for `POST /jobs` and `POST /dead-letter/:id/reprocess`:
+
+```dotenv
+AUTH_HMAC_REQUIRED=true
+AUTH_BEARER_ENABLED=true
+AUTH_CLOCK_SKEW_MS=300000
+AUTH_NONCE_TTL_MS=300000
+ADMIN_API_TOKEN=replace-with-strong-admin-token
+```
+
+Create at least one active API client key:
+
+```sql
+INSERT INTO api_clients (key_id, tenant_id, client_name, secret_value, status)
+VALUES ('client_demo_key_001', 'tenant1', 'Demo Client', 'replace-with-strong-secret', 'active');
+```
+
+Required headers for bearer mode:
+
+- `Authorization: Bearer <accessToken>`
+
+HMAC compatibility headers (optional fallback):
+
+- `X-Access-Key-Id`
+- `X-Timestamp`
+- `X-Nonce`
+- `X-Signature`
+
+Admin key-management endpoints require:
+
+- `X-Admin-Token: <ADMIN_API_TOKEN>`
+
+Admin endpoints:
+
+- `GET /admin/keys`
+- `POST /admin/keys`
+- `POST /admin/keys/:id/rotate`
+- `POST /admin/keys/:id/revoke`
+
+## 6.2 Verify Admin Routes (Line by Line)
+
+Use Postman `Admin` folder or run these calls in order.
+
+1. List keys:
+
+```http
+GET /admin/keys
+X-Admin-Token: <ADMIN_API_TOKEN>
+```
+
+Expected: `200` and `{"items":[...]}`.
+
+2. Create a key:
+
+```http
+POST /admin/keys
+X-Admin-Token: <ADMIN_API_TOKEN>
+Content-Type: application/json
+
+{
+  "tenantId": "tenant1",
+  "clientName": "Acme Worker"
+}
+```
+
+Expected: `201` and response with `keyId` + `secretValue`.
+
+3. Rotate key secret:
+
+```http
+POST /admin/keys/<keyId>/rotate
+X-Admin-Token: <ADMIN_API_TOKEN>
+```
+
+Expected: `200` and new `secretValue`.
+
+4. Revoke key:
+
+```http
+POST /admin/keys/<keyId>/revoke
+X-Admin-Token: <ADMIN_API_TOKEN>
+```
+
+Expected: `200` and `revoked: true`.
+
+5. Negative checks:
+
+- Missing token -> `401 ADMIN_AUTH_MISSING_TOKEN`
+- Wrong token -> `401 ADMIN_AUTH_INVALID_TOKEN`
+- Unknown key id for rotate/revoke -> `404 ADMIN_KEY_NOT_FOUND`
 
 ## 7. Start Services
 
@@ -187,29 +290,35 @@ Expected status codes:
 
 Request payload for `POST /jobs`:
 
+Minimal request (recommended):
+
 ```json
 {
   "job": {
-    "name": "email.send",
-    "metadata": {
-      "idempotencyKey": "tenant1:email.send:user123:send:v1-001",
-      "correlationId": "corr-001-abcdef",
-      "requestedAt": "2026-03-09T00:00:00.000Z",
-      "tenantId": "tenant1",
-      "schemaVersion": 1,
-      "priority": "default",
-      "workload": "io-bound"
-    },
+    "name": "webhook.dispatch",
     "payload": {
-      "to": "user@example.com",
-      "subject": "Welcome",
-      "body": "Hello from queue system"
+      "endpoint": "https://example.com/webhook",
+      "eventType": "user.created",
+      "method": "POST",
+      "headers": {
+        "x-source": "queue-system"
+      },
+      "data": {
+        "userId": "u-123",
+        "email": "user@example.com"
+      }
     }
   },
   "delayMs": 0,
-  "shardCount": 1
+  "retryCount": 3
 }
 ```
+
+Notes:
+
+- Service auto-fills metadata defaults when omitted.
+- `retryCount` controls number of retries after the first attempt.
+- `shardCount` controls queue partitioning/sharding and is not retry count.
 
 ## 11. Postman
 
@@ -218,6 +327,26 @@ Import: `postman/queue-system.postman_collection.json`
 Set collection variable:
 
 - `baseUrl` = `http://localhost:3000`
+
+Set auth variables in Postman environment:
+
+- `adminToken` = value of `ADMIN_API_TOKEN` from service `.env`
+- `accessToken` = API client secret from create/rotate response
+- `accessKeyId` and `secretKey` = only needed if you intentionally use HMAC fallback
+- `tenantId` = tenant id used by your client (for example `tenant1`)
+
+Important:
+
+- Service runtime values belong in `c:\Queue\.env`.
+- Postman variables belong in Postman environment files.
+- Keep `ADMIN_API_TOKEN` and `secretKey` in Postman as secret-type variables.
+
+Current flow now (simplified):
+
+1. Admin creates client key using `POST /admin/keys`.
+2. Response returns `secretValue`.
+3. Client uses `Authorization: Bearer <secretValue>` to call `POST /jobs`.
+4. If you need to remove access, call `POST /admin/keys/:id/revoke`.
 
 ## 12. Common Issues
 
