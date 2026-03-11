@@ -122,6 +122,7 @@ Admin endpoints:
 Detailed payloads and examples:
 
 - `docs/API_USAGE_AND_PAYLOAD_REFERENCE.md`
+- `docs/RENDER_DEPLOYMENT_SINGLE_OR_DUAL.md`
 
 ## Example Requests
 
