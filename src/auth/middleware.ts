@@ -2,6 +2,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { appConfig } from '../config/env.js';
 import { AppError } from '../shared/errors.js';
 import { logger } from '../shared/logger.js';
+import { setAuthContext } from './context.js';
 import { buildCanonicalRequest, parseTimestampMs, sha256Hex, signCanonicalRequest, timingSafeEqualHex } from './hmac.js';
 import {
   consumeRequestNonce,
@@ -67,11 +68,11 @@ export function requireClientHmacAuth(): RequestHandler {
           });
         }
 
-        res.locals.auth = {
+        setAuthContext(res, {
           tenantId: apiClient.tenantId,
           keyId: apiClient.keyId,
           clientName: apiClient.clientName,
-        };
+        });
 
         if (apiClient.matchedByLegacyPlaintextToken) {
           await setApiClientBearerTokenHash(apiClient.keyId, bearerToken);
@@ -141,11 +142,11 @@ export function requireClientHmacAuth(): RequestHandler {
         });
       }
 
-      res.locals.auth = {
+      setAuthContext(res, {
         tenantId: apiClient.tenantId,
         keyId: apiClient.keyId,
         clientName: apiClient.clientName,
-      };
+      });
 
       await touchApiClientUsage(apiClient.keyId);
       return next();

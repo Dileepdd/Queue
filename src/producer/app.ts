@@ -3,6 +3,7 @@ import { ZodError, z } from 'zod';
 import { requireAdminToken } from '../admin/middleware.js';
 import { createApiKey, listApiKeys, revokeApiKey, rotateApiKey } from '../admin/service.js';
 import { createApiKeySchema, listApiKeysQuerySchema } from '../admin/schemas.js';
+import { getAuthContext, requireTenantId } from '../auth/context.js';
 import { requireClientHmacAuth } from '../auth/middleware.js';
 import { reprocessDeadLetter } from '../dead-letter/service.js';
 import { closeDbPool } from '../infra/db.js';
@@ -37,18 +38,6 @@ const jobListQuerySchema = z.object({
     }, z.coerce.number().int().min(1).max(200).optional())
     .default(50),
 });
-
-function getTenantIdFromAuth(res: express.Response): string {
-  const auth = res.locals.auth as { tenantId?: string } | undefined;
-  const tenantId = auth?.tenantId;
-  if (!tenantId) {
-    throw new AppError('Missing authenticated tenant context', {
-      code: 'AUTH_CONTEXT_MISSING',
-      statusCode: 401,
-    });
-  }
-  return tenantId;
-}
 
 function mapInfrastructureError(error: unknown): AppError | undefined {
   if (!error || typeof error !== 'object') {
@@ -159,7 +148,7 @@ export function createProducerApp() {
 
   app.post('/jobs', clientAuth, async (req, res, next) => {
     try {
-      const authTenantId = (res.locals.auth as { tenantId?: string } | undefined)?.tenantId;
+      const authTenantId = getAuthContext(res)?.tenantId;
       const body = req.body as { uniqueId?: unknown; job?: { name?: unknown; metadata?: { correlationId?: unknown } } };
       logger.info(
         {
@@ -211,7 +200,7 @@ export function createProducerApp() {
 
   app.post('/jobs/bulk', clientAuth, async (req, res, next) => {
     try {
-      const authTenantId = (res.locals.auth as { tenantId?: string } | undefined)?.tenantId;
+      const authTenantId = getAuthContext(res)?.tenantId;
       const body = req.body as { items?: unknown[]; defaults?: { executionMode?: unknown } };
       logger.info(
         {
@@ -263,7 +252,7 @@ export function createProducerApp() {
 
   app.get('/jobs/:jobId', clientAuth, async (req, res, next) => {
     try {
-      const tenantId = getTenantIdFromAuth(res);
+      const tenantId = requireTenantId(res);
       const jobId = req.params.jobId?.trim();
 
       if (!jobId) {
@@ -289,7 +278,7 @@ export function createProducerApp() {
 
   app.get('/jobs/:jobId/events', clientAuth, async (req, res, next) => {
     try {
-      const tenantId = getTenantIdFromAuth(res);
+      const tenantId = requireTenantId(res);
       const jobId = req.params.jobId?.trim();
 
       if (!jobId) {
@@ -315,7 +304,7 @@ export function createProducerApp() {
 
   app.get('/jobs', clientAuth, async (req, res, next) => {
     try {
-      const tenantId = getTenantIdFromAuth(res);
+      const tenantId = requireTenantId(res);
       const parsed = jobListQuerySchema.parse(req.query);
 
       const result = await listJobStatuses({
