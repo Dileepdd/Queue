@@ -56,10 +56,6 @@ function getBearerToken(req: Request): string | undefined {
 
 export function requireClientHmacAuth(): RequestHandler {
   return async (req: Request, res: Response, next: NextFunction) => {
-    if (!appConfig.authHmacRequired) {
-      return next();
-    }
-
     try {
       const bearerToken = getBearerToken(req);
       if (appConfig.authBearerEnabled && bearerToken) {
@@ -82,6 +78,18 @@ export function requireClientHmacAuth(): RequestHandler {
         }
 
         await touchApiClientUsage(apiClient.keyId);
+        return next();
+      }
+
+      // If HMAC is not required, bearer is the only accepted client auth mode.
+      if (!appConfig.authHmacRequired) {
+        if (appConfig.authBearerEnabled) {
+          throw new AppError('Missing bearer token', {
+            code: 'AUTH_MISSING_TOKEN',
+            statusCode: 401,
+          });
+        }
+
         return next();
       }
 
