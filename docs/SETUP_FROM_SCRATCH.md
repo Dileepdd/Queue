@@ -88,6 +88,34 @@ Important tuning values currently used:
 - `QUEUE_CONCURRENCY=10`
 - `DB_IDEMPOTENCY_CLAIM_WARN_MS=600`
 
+### Redis Command Budget (Upstash / Metered Plans)
+
+BullMQ workers continuously poll Redis for new jobs, even when idle. Each active queue generates ~12 Redis commands/second in background polling (worker BRPOP, QueueEvents pub/sub, stalled-job checks). With all 6 default queues running, this totals ~70 commands/second (~6M/day).
+
+For metered Redis providers like Upstash Free Tier (500K commands/month), configure these variables to reduce command usage:
+
+```dotenv
+# Run only the queue(s) you actually use (comma-separated).
+# Omit or leave empty to start all 6 default queues.
+WORKER_QUEUES=default-io
+
+# Disable autoscaling signal collection (saves ~1.5 cmd/sec per queue).
+SCALE_SIGNALS_ENABLED=false
+
+# If signals are enabled, increase the interval (default: 300000ms = 5 min).
+SCALE_SIGNAL_INTERVAL_MS=300000
+```
+
+Estimated Redis command rates by configuration:
+
+| Configuration | Commands/sec | Commands/day |
+|---|---|---|
+| All 6 queues + signals every 30s | ~70 | ~6.0M |
+| 1 queue + signals every 5 min | ~13 | ~1.1M |
+| 1 queue + signals disabled | ~12 | ~1.0M |
+
+For always-on workers on Upstash Free Tier, use 1 queue with signals disabled.
+
 ## 6. Run Database Migration
 
 Run these migration files on your Postgres DB in order:

@@ -88,8 +88,41 @@ export function createProducerApp() {
     }),
   );
 
-  app.get('/health', (_req, res) => {
-    res.status(200).json({ ok: true, service: 'producer' });
+  app.use((req, res, next) => {
+    const startedAt = Date.now();
+
+    res.on('finish', () => {
+      const elapsedMs = Date.now() - startedAt;
+      const authTenantId = getAuthContext(res)?.tenantId;
+
+      logger.info(
+        {
+          method: req.method,
+          path: req.originalUrl,
+          statusCode: res.statusCode,
+          elapsedMs,
+          tenantId: authTenantId,
+        },
+        'api request completed',
+      );
+    });
+
+    next();
+  });
+
+  app.get('/health', async (_req, res) => {
+    const checks: Record<string, boolean> = { service: true };
+
+    try {
+      const { getDbPool } = await import('../infra/db.js');
+      await getDbPool().query('SELECT 1');
+      checks.database = true;
+    } catch {
+      checks.database = false;
+    }
+
+    const allHealthy = Object.values(checks).every(Boolean);
+    res.status(allHealthy ? 200 : 503).json({ ok: allHealthy, service: 'producer', checks });
   });
 
   app.get('/admin/keys', adminAuth, async (req, res, next) => {

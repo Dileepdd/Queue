@@ -16,9 +16,9 @@ export function requireAdminToken(): RequestHandler {
   return (_req: Request, _res: Response, next: NextFunction) => {
     if (!appConfig.adminApiToken) {
       return next(
-        new AppError('Admin API token is not configured', {
-          code: 'ADMIN_AUTH_NOT_CONFIGURED',
-          statusCode: 503,
+        new AppError('Invalid admin token', {
+          code: 'ADMIN_AUTH_INVALID_TOKEN',
+          statusCode: 401,
         }),
       );
     }

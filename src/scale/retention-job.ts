@@ -35,12 +35,20 @@ async function runRetentionSweep(): Promise<void> {
     [appConfig.retentionDeadLetterDays],
   );
 
+  const expiredNonces = await pool.query(
+    `
+      DELETE FROM api_request_nonces
+      WHERE expires_at < NOW()
+    `,
+  );
+
   logger.info(
     {
       retention: {
         idempotencyDeleted: idem.rowCount ?? 0,
         statusEventsDeleted: statusEvents.rowCount ?? 0,
         deadLettersDeleted: deadLetters.rowCount ?? 0,
+        expiredNoncesDeleted: expiredNonces.rowCount ?? 0,
       },
     },
     'retention sweep complete',

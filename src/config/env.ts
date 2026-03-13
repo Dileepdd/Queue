@@ -58,7 +58,9 @@ const envSchema = z.object({
   QUEUE_MAX_PAYLOAD_BYTES: z.coerce.number().int().min(1024).default(262144),
   QUEUE_MAX_DELAYED_HORIZON_MS: z.coerce.number().int().min(1000).default(604800000),
 
-  SCALE_SIGNAL_INTERVAL_MS: z.coerce.number().int().min(5000).default(30000),
+  WORKER_QUEUES: z.string().default(''),
+  SCALE_SIGNALS_ENABLED: envBoolean(true),
+  SCALE_SIGNAL_INTERVAL_MS: z.coerce.number().int().min(5000).default(300000),
   REDIS_CONNECTION_BUDGET_PRODUCER: z.coerce.number().int().min(1).default(100),
   REDIS_CONNECTION_BUDGET_WORKER: z.coerce.number().int().min(1).default(100),
   DB_IDEMPOTENCY_CLAIM_WARN_MS: z.coerce.number().int().min(1).default(150),
@@ -68,6 +70,10 @@ const envSchema = z.object({
   RETENTION_IDEMPOTENCY_DAYS: z.coerce.number().int().min(1).default(30),
   RETENTION_STATUS_EVENT_DAYS: z.coerce.number().int().min(1).default(30),
   RETENTION_DEAD_LETTER_DAYS: z.coerce.number().int().min(1).default(90),
+
+  WEBHOOK_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(30000),
+  WEBHOOK_SIGNING_SECRET: z.string().default(''),
+  WEBHOOK_SSRF_PROTECTION: envBoolean(true),
 
   AUTH_HMAC_REQUIRED: envBoolean(false),
   AUTH_BEARER_ENABLED: envBoolean(true),
@@ -118,6 +124,10 @@ export const appConfig = Object.freeze({
   queueMaxDepth: parsed.data.QUEUE_MAX_DEPTH,
   queueMaxPayloadBytes: parsed.data.QUEUE_MAX_PAYLOAD_BYTES,
   queueMaxDelayedHorizonMs: parsed.data.QUEUE_MAX_DELAYED_HORIZON_MS,
+  workerQueues: parsed.data.WORKER_QUEUES
+    ? parsed.data.WORKER_QUEUES.split(',').map((q) => q.trim()).filter(Boolean)
+    : [],
+  scaleSignalsEnabled: parsed.data.SCALE_SIGNALS_ENABLED,
   scaleSignalIntervalMs: parsed.data.SCALE_SIGNAL_INTERVAL_MS,
   redisConnectionBudgetProducer: parsed.data.REDIS_CONNECTION_BUDGET_PRODUCER,
   redisConnectionBudgetWorker: parsed.data.REDIS_CONNECTION_BUDGET_WORKER,
@@ -127,6 +137,9 @@ export const appConfig = Object.freeze({
   retentionIdempotencyDays: parsed.data.RETENTION_IDEMPOTENCY_DAYS,
   retentionStatusEventDays: parsed.data.RETENTION_STATUS_EVENT_DAYS,
   retentionDeadLetterDays: parsed.data.RETENTION_DEAD_LETTER_DAYS,
+  webhookTimeoutMs: parsed.data.WEBHOOK_TIMEOUT_MS,
+  webhookSigningSecret: parsed.data.WEBHOOK_SIGNING_SECRET,
+  webhookSsrfProtection: parsed.data.WEBHOOK_SSRF_PROTECTION,
   authHmacRequired: parsed.data.AUTH_HMAC_REQUIRED,
   authBearerEnabled: parsed.data.AUTH_BEARER_ENABLED,
   authClockSkewMs: parsed.data.AUTH_CLOCK_SKEW_MS,

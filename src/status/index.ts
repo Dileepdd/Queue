@@ -1,4 +1,4 @@
-export { getJobStatusByJobId, getJobTimelineByJobId, listJobStatuses, upsertJobStatus } from './store.js';
+export { getJobStatusByJobId, getJobTimelineByJobId, listJobStatuses, upsertJobStatus, upsertJobStatusBatch } from './store.js';
 export type {
 	JobStatus,
 	JobStatusEventRecord,

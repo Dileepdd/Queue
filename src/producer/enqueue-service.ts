@@ -4,7 +4,7 @@ import { appConfig } from '../config/env.js';
 import { resolveQueueName, validateJobEnvelope } from '../jobs/index.js';
 import type { AnyJobEnvelope, EnqueueSource, ExecutionMode, JobName } from '../jobs/index.js';
 import { AppError } from '../shared/errors.js';
-import { upsertJobStatus } from '../status/index.js';
+import { upsertJobStatus, upsertJobStatusBatch } from '../status/index.js';
 import { getOrCreateQueue } from './queue-registry.js';
 import { assertTenantRateLimit } from './rate-limit.js';
 
@@ -157,7 +157,23 @@ function ensureWithinLimits(job: AnyJobEnvelope, delayMs: number) {
   }
 }
 
+const QUEUE_DEPTH_CACHE_TTL_MS = 2000;
+const queueDepthCache = new Map<string, { depth: number; cachedAt: number }>();
+
 async function assertQueueCapacity(queueName: string) {
+  const now = Date.now();
+  const cached = queueDepthCache.get(queueName);
+  if (cached && now - cached.cachedAt < QUEUE_DEPTH_CACHE_TTL_MS) {
+    if (cached.depth >= appConfig.queueMaxDepth) {
+      throw new AppError('Queue is overloaded, retry later', {
+        code: 'QUEUE_OVERLOADED',
+        statusCode: 503,
+        retryable: true,
+      });
+    }
+    return;
+  }
+
   const queue = getOrCreateQueue(queueName);
   const counts = await queue.getJobCounts('waiting', 'active', 'delayed', 'prioritized', 'waiting-children');
   const depth =
@@ -166,6 +182,8 @@ async function assertQueueCapacity(queueName: string) {
     (counts.delayed ?? 0) +
     (counts.prioritized ?? 0) +
     (counts['waiting-children'] ?? 0);
+
+  queueDepthCache.set(queueName, { depth, cachedAt: now });
 
   if (depth >= appConfig.queueMaxDepth) {
     throw new AppError('Queue is overloaded, retry later', {
@@ -271,25 +289,27 @@ export async function enqueueJobsBulk(inputs: EnqueueInput[]): Promise<BulkEnque
         })),
       );
 
-      await Promise.all(
-        batch.map(async ({ index, prepared }, idx) => {
-          const resolvedJobId = added[idx]?.id ?? prepared.jobOptions.jobId ?? 'unknown';
+      const statusRecords = batch.map(({ prepared }, idx) => {
+        const resolvedJobId = added[idx]?.id ?? prepared.jobOptions.jobId ?? 'unknown';
+        return {
+          jobId: resolvedJobId,
+          queue: prepared.queueName,
+          jobName: prepared.envelope.name as JobName,
+          status: 'queued' as const,
+          metadata: prepared.envelope.metadata,
+          updatedAt: new Date().toISOString(),
+        };
+      });
 
-          await upsertJobStatus({
-            jobId: resolvedJobId,
-            queue: prepared.queueName,
-            jobName: prepared.envelope.name as JobName,
-            status: 'queued',
-            metadata: prepared.envelope.metadata,
-            updatedAt: new Date().toISOString(),
-          });
+      await upsertJobStatusBatch(statusRecords);
 
-          output[index] = {
-            queue: prepared.queueName,
-            jobId: resolvedJobId,
-          };
-        }),
-      );
+      for (let idx = 0; idx < batch.length; idx++) {
+        const entry = batch[idx]!;
+        output[entry.index] = {
+          queue: entry.prepared.queueName,
+          jobId: statusRecords[idx]!.jobId,
+        };
+      }
     }
   }
 

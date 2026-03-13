@@ -268,3 +268,74 @@ See `docs/SETUP_FROM_SCRATCH.md` for full setup and auth details.
 - Runbook: `docs/OPERATIONS_RUNBOOK.md`
 - Reliability decisions: `PREBUILD_DECISIONS.md`
 - Validation notes: `docs/SECTION7_VALIDATION.md`
+
+## Throughput & Capacity
+
+The core operation is single job enqueue (`POST /jobs`) — the primary API for all integrations. Bulk enqueue is available for batch imports but single enqueue is the heart of the system.
+
+### Single Enqueue (`POST /jobs`) — Core Path
+
+| Step | Type | Calls | Avg Latency |
+|---|---|---|---|
+| Zod validation | CPU | 0 I/O | ~0.1ms |
+| Rate limit check | In-memory | 0 I/O | ~0ms |
+| Queue depth check | Redis | 0 (cached 2s) | ~0ms |
+| `queue.add()` | Redis | 1 | ~2ms |
+| Status upsert (CTE) | DB | 1 | ~5ms |
+| **Total** | | **1 Redis + 1 DB** | **~7ms** |
+
+**Single enqueue throughput:**
+
+| DB_POOL_MAX | Max enqueue/sec |
+|---|---|
+| 5 | ~1,000/sec |
+| 15 | ~3,000/sec |
+| 20 | ~4,000/sec |
+
+### Worker Processing (per job)
+
+| Step | DB Calls |
+|---|---|
+| Idempotency claim (atomic CTE) | 1 |
+| Status → active | 1 |
+| Processor (your code) | — |
+| Mark idempotency completed | 1 |
+| Status → completed | 1 |
+| **Total** | **4** |
+
+**Worker throughput:**
+
+| DB_POOL_MAX | Max jobs/sec |
+|---|---|
+| 5 | ~250/sec |
+| 15 | ~750/sec |
+| 20 | ~1,000/sec |
+
+### Bulk Enqueue (`POST /jobs/bulk`) — Batch Import
+
+For high-volume imports, bulk enqueue batches 100 jobs per Redis+DB call:
+
+| 1,000 jobs via bulk | Redis Calls | DB Calls |
+|---|---|---|
+| Before optimizations | 1,000 | 2,000 |
+| After optimizations | 10 | 10 |
+
+### Bottleneck Order
+
+1. `DB_POOL_MAX` — primary limiter for all DB-bound operations
+2. Database connection pool (Supabase free tier: ~20-60 concurrent connections)
+3. Redis command budget (Upstash free tier: 500K commands/month)
+4. Network latency to DB/Redis (~2-10ms per call)
+5. Single Node.js process (~10K-15K concurrent async operations)
+
+### Redis Command Budget
+
+BullMQ workers poll Redis continuously (~12 cmd/sec per queue, even idle).
+
+| Config | Idle cmd/sec | Daily |
+|---|---|---|
+| 6 queues + signals (30s) | ~70 | ~6M |
+| 1 queue + signals (5 min) | ~13 | ~1.1M |
+| 1 queue + signals off | ~12 | ~1M |
+
+Set `WORKER_QUEUES=default-io` and `SCALE_SIGNALS_ENABLED=false` for metered Redis providers.

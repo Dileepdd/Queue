@@ -10,7 +10,7 @@ const DEFAULT_PRIORITIES = ['high', 'default', 'low'] as const;
 const DEFAULT_WORKLOADS = ['io-bound', 'cpu-heavy'] as const;
 
 const noopProcessor: Processor = async (job) => {
-  logger.info({ queue: job.queueName, jobId: job.id, jobName: job.name }, 'processing job');
+  logger.warn({ queue: job.queueName, jobId: job.id, jobName: job.name }, 'no processor registered, using noop');
   return { ok: true };
 };
 
@@ -19,6 +19,10 @@ export async function startWorkerRuntime(queueName = DEFAULT_QUEUE_NAME, process
 }
 
 export function getDefaultWorkerQueues(): string[] {
+  if (appConfig.workerQueues.length > 0) {
+    return appConfig.workerQueues;
+  }
+
   return DEFAULT_PRIORITIES.flatMap((priority) =>
     DEFAULT_WORKLOADS.map((workload) => getBaseQueueName(priority, workload)),
   );
@@ -37,7 +41,9 @@ export async function startWorkerRuntimes(queueNames: string[], processor: Proce
 
   evaluateRedisConnectionBudget('worker', uniqueQueueNames.length * 2);
 
-  const signals = uniqueQueueNames.map((queueName) => startWorkerSignals(queueName));
+  const signals = appConfig.scaleSignalsEnabled
+    ? uniqueQueueNames.map((queueName) => startWorkerSignals(queueName))
+    : [];
   const retention = startRetentionJob();
 
   const stopBackground = async () => {

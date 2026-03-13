@@ -51,17 +51,11 @@ export async function findActiveApiClientByToken(token: string): Promise<ApiClie
     `
       SELECT key_id, tenant_id, client_name, secret_value, bearer_token_hash
       FROM api_clients
-      WHERE (
-          bearer_token_hash = $1
-          OR secret_value = $2
-        )
+      WHERE bearer_token_hash = $1
         AND status = 'active'
-      ORDER BY
-        CASE WHEN bearer_token_hash = $1 THEN 0 ELSE 1 END,
-        updated_at DESC
       LIMIT 1
     `,
-    [tokenHash, token],
+    [tokenHash],
   );
 
   const row = result.rows[0];
@@ -74,7 +68,6 @@ export async function findActiveApiClientByToken(token: string): Promise<ApiClie
     tenantId: row.tenant_id,
     clientName: row.client_name,
     secretValue: row.secret_value,
-    ...(row.bearer_token_hash ? {} : { matchedByLegacyPlaintextToken: true }),
   };
 }
 

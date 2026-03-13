@@ -39,6 +39,11 @@ Commands:
 - Start Command: npm run start:all
 - Health Check Path: /health
 
+Recommended DB pool size:
+
+- DB_POOL_MAX=15 (dev/demo on Supabase free)
+- DB_POOL_MAX=20 (default, suitable for most single-server workloads)
+
 Behavior:
 
 - API and worker run in one Node process using src/index-all.ts.
@@ -60,6 +65,12 @@ Render services:
 - Type: Background Worker
 - Build Command: npm install; npm run build
 - Start Command: npm run start:worker
+
+Recommended DB pool sizes:
+
+- Producer: DB_POOL_MAX=10 (handles API queries only)
+- Worker: DB_POOL_MAX=15–20 (handles status writes, idempotency, dead-letter)
+- High throughput (paid DB): DB_POOL_MAX=30–50 on each service
 
 Behavior:
 
@@ -86,6 +97,18 @@ Strongly recommended:
 - AUTH_BEARER_ENABLED=true
 - AUTH_HMAC_REQUIRED=false
 
+Database pool tuning:
+
+| Scenario | DB_POOL_MAX |
+|---|---|
+| Dev / demo (Supabase free tier) | 5–10 |
+| Single server combined mode | 15–20 |
+| Separate producer + worker | Producer: 10, Worker: 15–20 |
+| High throughput (paid DB) | 30–50 |
+
+Too high → overwhelms the DB with connections, hits provider limits (Supabase free = 60 max).
+Too low → requests queue for a pool slot, increasing latency under load.
+
 Optional queue tuning:
 
 - QUEUE_CONCURRENCY=10
@@ -93,6 +116,14 @@ Optional queue tuning:
 - QUEUE_BACKOFF_MS=1000
 - QUEUE_RATE_LIMIT_MAX=100
 - QUEUE_RATE_LIMIT_DURATION_MS=1000
+
+Redis command budget (important for metered Redis like Upstash):
+
+- WORKER_QUEUES=default-io
+- SCALE_SIGNALS_ENABLED=false
+- SCALE_SIGNAL_INTERVAL_MS=300000
+
+BullMQ workers poll Redis continuously (~12 cmd/sec per queue, even idle). With all 6 default queues this totals ~70 cmd/sec (~6M/day). On Upstash Free Tier (500K/month), set WORKER_QUEUES to only the queue(s) you need and disable scale signals to stay within limits.
 
 Notes:
 

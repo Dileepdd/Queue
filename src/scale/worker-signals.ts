@@ -15,7 +15,7 @@ async function collectQueueSignals(queue: Queue) {
 
   const queueAgeMs = oldestEnqueuedAt ? Math.max(0, now - oldestEnqueuedAt) : 0;
 
-  logger.info(
+  logger.trace(
     {
       queue: queue.name,
       signals: {

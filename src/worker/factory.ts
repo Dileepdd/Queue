@@ -175,10 +175,14 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
     }
     } finally {
       if (sequentialLockKey && sequentialLockToken) {
-        const current = await sequentialLockRedis.get(sequentialLockKey);
-        if (current === sequentialLockToken) {
-          await sequentialLockRedis.del(sequentialLockKey);
-        }
+        // Atomic compare-and-delete to avoid TOCTOU race where another worker
+        // acquires the lock between our GET and DEL.
+        await sequentialLockRedis.eval(
+          `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
+          1,
+          sequentialLockKey,
+          sequentialLockToken,
+        );
       }
     }
   };
@@ -219,7 +223,7 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
           schemaVersion?: number;
         };
 
-        void insertDeadLetter({
+        insertDeadLetter({
           queue: options.queueName,
           jobId: job.id ?? 'unknown',
           jobName: (job.name as JobName) ?? 'webhook.dispatch',
@@ -232,6 +236,11 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
           maxAttempts,
           reason: error.message,
           ...(error.stack ? { stack: error.stack } : {}),
+        }).catch((dlqError) => {
+          logger.error(
+            { queue: options.queueName, jobId: job.id, error: dlqError instanceof Error ? dlqError.message : dlqError },
+            'failed to insert dead-letter record',
+          );
         });
 
         void upsertJobStatus({

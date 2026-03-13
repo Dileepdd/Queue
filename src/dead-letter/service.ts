@@ -12,10 +12,14 @@ export async function reprocessDeadLetter(deadLetterId: number): Promise<{ queue
   }
 
   const queue = getOrCreateQueue(record.queue);
+  const metadata = record.metadataJson as unknown as Record<string, unknown> | undefined;
   const reprocessed = await queue.add(record.jobName, {
     name: record.jobName,
     payload: record.payloadJson,
     metadata: record.metadataJson,
+    executionMode: (metadata && typeof metadata === 'object' && (metadata.executionMode === 'sequential' || metadata.executionMode === 'parallel'))
+      ? metadata.executionMode
+      : 'parallel',
   });
 
   await markDeadLetterReprocessed(deadLetterId);

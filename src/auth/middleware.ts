@@ -8,7 +8,6 @@ import {
   consumeRequestNonce,
   findActiveApiClientByKeyId,
   findActiveApiClientByToken,
-  setApiClientBearerTokenHash,
   touchApiClientUsage,
 } from './repository.js';
 
@@ -73,10 +72,6 @@ export function requireClientHmacAuth(): RequestHandler {
           keyId: apiClient.keyId,
           clientName: apiClient.clientName,
         });
-
-        if (apiClient.matchedByLegacyPlaintextToken) {
-          await setApiClientBearerTokenHash(apiClient.keyId, bearerToken);
-        }
 
         await touchApiClientUsage(apiClient.keyId);
         return next();
