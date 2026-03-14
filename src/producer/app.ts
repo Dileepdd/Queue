@@ -39,6 +39,25 @@ const jobListQuerySchema = z.object({
     .default(50),
 });
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function deepMergeJob(base: Record<string, unknown>, override: unknown): unknown {
+  if (!isPlainObject(override)) return override ?? base;
+  const result: Record<string, unknown> = { ...base };
+  for (const key of Object.keys(override)) {
+    const baseVal = base[key];
+    const overVal = override[key];
+    if (isPlainObject(baseVal) && isPlainObject(overVal)) {
+      result[key] = deepMergeJob(baseVal, overVal);
+    } else if (overVal !== undefined) {
+      result[key] = overVal;
+    }
+  }
+  return result;
+}
+
 function mapInfrastructureError(error: unknown): AppError | undefined {
   if (!error || typeof error !== 'object') {
     return undefined;
@@ -249,10 +268,11 @@ export function createProducerApp() {
       );
 
       const parsed = bulkEnqueueRequestSchema.parse(req.body);
+      const defaultJob = parsed.defaults?.job;
 
       const jobs = await enqueueJobsBulk(
         parsed.items.map((item) => ({
-          job: item.job,
+          job: defaultJob ? deepMergeJob(defaultJob, item.job) : item.job,
           enqueueSource: 'bulk',
           uniqueId: item.uniqueId ?? parsed.defaults?.uniqueId,
           executionMode: item.executionMode ?? parsed.defaults?.executionMode,

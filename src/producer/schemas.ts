@@ -17,6 +17,7 @@ export const bulkEnqueueRequestSchema = z.object({
       delayMs: z.number().int().min(0).optional(),
       retryCount: z.number().int().min(0).max(20).optional(),
       shardCount: z.number().int().min(1).max(1024).optional(),
+      job: z.record(z.unknown()).optional(),
     })
     .optional(),
   items: z.array(enqueueRequestSchema).min(1).max(10000),

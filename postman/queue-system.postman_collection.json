@@ -746,7 +746,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"defaults\": {\n    \"executionMode\": \"{{executionMode}}\",\n    \"retryCount\": {{retryCount}},\n    \"delayMs\": {{enqueueDelayMs}}\n  },\n  \"items\": [\n    {\n      \"uniqueId\": \"{{uniqueId}}\",\n      \"job\": {\n        \"name\": \"webhook.dispatch\",\n        \"payload\": {\n          \"endpoint\": \"https://httpbin.org/post\",\n          \"eventType\": \"data.imported\",\n          \"method\": \"POST\",\n          \"data\": {\n            \"recordId\": \"r-1\"\n          }\n        }\n      }\n    },\n    {\n      \"uniqueId\": \"{{uniqueId}}\",\n      \"executionMode\": \"sequential\",\n      \"job\": {\n        \"name\": \"webhook.dispatch\",\n        \"payload\": {\n          \"endpoint\": \"https://httpbin.org/post\",\n          \"eventType\": \"data.imported\",\n          \"method\": \"POST\",\n          \"data\": {\n            \"recordId\": \"r-2\"\n          }\n        }\n      }\n    }\n  ]\n}"
+              "raw": "{\n  \"defaults\": {\n    \"executionMode\": \"{{executionMode}}\",\n    \"retryCount\": {{retryCount}},\n    \"delayMs\": {{enqueueDelayMs}},\n    \"job\": {\n      \"name\": \"webhook.dispatch\",\n      \"payload\": {\n        \"endpoint\": \"https://httpbin.org/post\",\n        \"eventType\": \"data.imported\",\n        \"method\": \"POST\"\n      }\n    }\n  },\n  \"items\": [\n    {\n      \"uniqueId\": \"{{uniqueId}}\",\n      \"job\": {\n        \"payload\": {\n          \"data\": {\n            \"recordId\": \"r-1\"\n          }\n        }\n      }\n    },\n    {\n      \"uniqueId\": \"{{uniqueId}}\",\n      \"executionMode\": \"sequential\",\n      \"job\": {\n        \"payload\": {\n          \"data\": {\n            \"recordId\": \"r-2\"\n          }\n        }\n      }\n    }\n  ]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/jobs/bulk",
@@ -758,7 +758,7 @@
                 "bulk"
               ]
             },
-            "description": "Bulk enqueue endpoint for high-volume imports. Response includes totalEnqueued and jobs array of {jobId, queue}."
+            "description": "Bulk enqueue endpoint for high-volume imports. Use defaults.job to specify common job properties (name, payload.endpoint, payload.eventType, etc.) once — they are deep-merged into each item's job. Items only need to provide the fields that differ (e.g. payload.data). Response includes totalEnqueued and jobs array of {jobId, queue}."
           },
           "event": [
             {

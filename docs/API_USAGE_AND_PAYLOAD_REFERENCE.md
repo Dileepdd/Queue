@@ -683,19 +683,30 @@ Request body:
   "defaults": {
     "executionMode": "parallel",
     "retryCount": 3,
-    "delayMs": 0
+    "delayMs": 0,
+    "job": {
+      "name": "webhook.dispatch",
+      "payload": {
+        "endpoint": "https://example.com/webhook",
+        "eventType": "data.imported",
+        "method": "POST"
+      }
+    }
   },
   "items": [
     {
       "uniqueId": "user-123",
       "job": {
-        "name": "webhook.dispatch",
         "payload": {
-          "endpoint": "https://example.com/webhook",
-          "eventType": "data.imported",
-          "data": {
-            "recordId": "r-1"
-          }
+          "data": { "recordId": "r-1" }
+        }
+      }
+    },
+    {
+      "uniqueId": "user-456",
+      "job": {
+        "payload": {
+          "data": { "recordId": "r-2" }
         }
       }
     }
@@ -708,6 +719,8 @@ Rules:
 - Each item has same shape as `POST /jobs`.
 - Item value overrides `defaults` when both are present.
 - `executionMode` can be set in `defaults` and/or per item (`parallel` or `sequential`).
+- `defaults.job` is deep-merged into each item's `job`. Nested objects (like `payload`) are merged recursively; scalar values in the item override the default.
+  - Example: if `defaults.job.payload.endpoint` is set and the item's `job.payload` only contains `data`, the merged job gets both `endpoint` from defaults and `data` from the item.
 
 Success:
 - Status: `202`
@@ -732,6 +745,18 @@ Success:
 Notes:
 - This endpoint bypasses per-request tenant admission limiting because the whole batch is one request.
 - Queue capacity checks still apply.
+
+### `defaults` Keys
+
+- `executionMode`: Applied to items that don't specify their own.
+- `retryCount`: Applied to items that don't specify their own.
+- `delayMs`: Applied to items that don't specify their own.
+- `shardCount`: Applied to items that don't specify their own.
+- `uniqueId`: Applied to items that don't specify their own.
+- `job`: Optional job template object. Deep-merged into each item's `job`.
+  - Nested objects (e.g. `payload`) merge recursively: item fields override default fields at the same path.
+  - Scalar values (strings, numbers) in the item replace the default.
+  - Use this to avoid repeating `name`, `payload.endpoint`, `payload.eventType`, `payload.method`, etc. across all items.
 
 ## Quick Usage Examples (PowerShell)
 
@@ -766,17 +791,14 @@ $body = @{
 Invoke-RestMethod -Method Post -Uri http://localhost:3000/jobs -ContentType 'application/json' -Body ($body | ConvertTo-Json -Depth 10)
 ```
 
-Bulk enqueue (single call):
+Bulk enqueue (single call with defaults.job):
 
 ```powershell
 $items = 1..1000 | ForEach-Object {
   @{
     uniqueId = 'user-123'
     job = @{
-      name = 'webhook.dispatch'
       payload = @{
-        endpoint = 'https://example.com/webhook'
-        eventType = 'data.imported'
         data = @{ recordId = "r-$_" }
       }
     }
@@ -784,7 +806,18 @@ $items = 1..1000 | ForEach-Object {
 }
 
 $bulkBody = @{
-  defaults = @{ retryCount = 3; delayMs = 0 }
+  defaults = @{
+    retryCount = 3
+    delayMs = 0
+    job = @{
+      name = 'webhook.dispatch'
+      payload = @{
+        endpoint = 'https://example.com/webhook'
+        eventType = 'data.imported'
+        method = 'POST'
+      }
+    }
+  }
   items = $items
 }
 
