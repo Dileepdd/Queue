@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AnyJobEnvelope, JobMetadata, JobName, JobPayload, JobPayloadMap } from './types.js';
+import type { AnyJobEnvelope, JobName, JobPayload, JobPayloadMap } from './types.js';
 
 const metadataSchema = z.object({
   idempotencyKey: z.string().min(8),

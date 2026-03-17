@@ -14,7 +14,7 @@ import {
 type RawBodyRequest = Request & { rawBody?: Buffer };
 
 function getRequiredHeader(req: Request, headerName: string): string {
-  const value = req.header(headerName);
+  const value = req.header?.(headerName);
   if (!value || !value.trim()) {
     throw new AppError(`Missing required header: ${headerName}`, {
       code: 'AUTH_MISSING_HEADERS',

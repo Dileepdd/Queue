@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { appConfig } from '../config/env.js';
 import { AppError } from '../shared/errors.js';
@@ -6,14 +6,16 @@ import { AppError } from '../shared/errors.js';
 function safeEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left);
   const rightBuffer = Buffer.from(right);
+
   if (leftBuffer.length !== rightBuffer.length) {
     return false;
   }
+
   return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 export function requireAdminToken(): RequestHandler {
-  return (_req: Request, _res: Response, next: NextFunction) => {
+  return (req: Request, _res: Response, next: NextFunction) => {
     if (!appConfig.adminApiToken) {
       return next(
         new AppError('Invalid admin token', {
@@ -23,7 +25,8 @@ export function requireAdminToken(): RequestHandler {
       );
     }
 
-    const token = _req.header('X-Admin-Token')?.trim();
+    const token = req.header('X-Admin-Token')?.trim();
+
     if (!token) {
       return next(
         new AppError('Missing required header: X-Admin-Token', {

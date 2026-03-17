@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 import type { DatabaseError } from 'pg';
 import { hashAccessToken } from '../auth/token.js';
 import { AppError } from '../shared/errors.js';

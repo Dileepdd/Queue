@@ -42,7 +42,7 @@ interface PreparedEnqueue {
 }
 
 function toBullSafeJobId(input: string): string {
-  return input.replace(/:/g, '__');
+  return input.replaceAll(':', '__');
 }
 
 function asObject(input: unknown): Record<string, unknown> {
@@ -103,7 +103,7 @@ function normalizeJobEnvelope(
   const correlationId =
     typeof metadata.correlationId === 'string' && metadata.correlationId.length >= 8
       ? metadata.correlationId
-      : `corr-${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+      : `corr-${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 
   const requestedAt =
     typeof metadata.requestedAt === 'string' && metadata.requestedAt.trim().length > 0 ? metadata.requestedAt : new Date().toISOString();
