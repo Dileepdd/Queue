@@ -3,7 +3,13 @@ import { appConfig } from '../config/env.js';
 import { AppError } from '../shared/errors.js';
 import { logger } from '../shared/logger.js';
 import { setAuthContext } from './context.js';
-import { buildCanonicalRequest, parseTimestampMs, sha256Hex, signCanonicalRequest, timingSafeEqualHex } from './hmac.js';
+import {
+  buildCanonicalRequest,
+  parseTimestampMs,
+  sha256Hex,
+  signCanonicalRequest,
+  timingSafeEqualHex,
+} from './hmac.js';
 import {
   consumeRequestNonce,
   findActiveApiClientByKeyId,
@@ -14,13 +20,15 @@ import {
 type RawBodyRequest = Request & { rawBody?: Buffer };
 
 function getRequiredHeader(req: Request, headerName: string): string {
-  const value = req.header?.(headerName);
+  const value = req.header?.(headerName); // ✅ optional chaining fix
+
   if (!value || !value.trim()) {
     throw new AppError(`Missing required header: ${headerName}`, {
       code: 'AUTH_MISSING_HEADERS',
       statusCode: 401,
     });
   }
+
   return value.trim();
 }
 
@@ -37,19 +45,15 @@ function validateTimestamp(timestampMs: number): void {
 }
 
 function getBearerToken(req: Request): string | undefined {
-  const value = req.header('Authorization');
-  if (!value) {
-    return undefined;
-  }
+  const value = req.header?.('Authorization'); // ✅ optional chaining
+
+  if (!value) return undefined;
 
   const [scheme, token] = value.trim().split(/\s+/, 2);
-  if (!scheme || !token) {
-    return undefined;
-  }
 
-  if (scheme.toLowerCase() !== 'bearer') {
-    return undefined;
-  }
+  if (!scheme || !token) return undefined;
+
+  if (scheme.toLowerCase() !== 'bearer') return undefined;
 
   return token;
 }
@@ -58,8 +62,10 @@ export function requireClientHmacAuth(): RequestHandler {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
       const bearerToken = getBearerToken(req);
+
       if (appConfig.authBearerEnabled && bearerToken) {
         const apiClient = await findActiveApiClientByToken(bearerToken);
+
         if (!apiClient) {
           throw new AppError('Invalid access token', {
             code: 'AUTH_INVALID_TOKEN',
@@ -95,15 +101,18 @@ export function requireClientHmacAuth(): RequestHandler {
       const providedSignature = getRequiredHeader(req, 'X-Signature').toLowerCase();
 
       const parsedTimestampMs = parseTimestampMs(timestampRaw);
+
       if (!parsedTimestampMs) {
         throw new AppError('Invalid timestamp format', {
           code: 'AUTH_INVALID_TIMESTAMP',
           statusCode: 401,
         });
       }
+
       validateTimestamp(parsedTimestampMs);
 
       const apiClient = await findActiveApiClientByKeyId(keyId);
+
       if (!apiClient) {
         throw new AppError('Invalid API key', {
           code: 'AUTH_INVALID_KEY',
@@ -111,7 +120,12 @@ export function requireClientHmacAuth(): RequestHandler {
         });
       }
 
-      const nonceAccepted = await consumeRequestNonce(apiClient.keyId, nonce, appConfig.authNonceTtlMs);
+      const nonceAccepted = await consumeRequestNonce(
+        apiClient.keyId,
+        nonce,
+        appConfig.authNonceTtlMs,
+      );
+
       if (!nonceAccepted) {
         throw new AppError('Nonce already used', {
           code: 'AUTH_NONCE_REPLAY',
@@ -121,6 +135,7 @@ export function requireClientHmacAuth(): RequestHandler {
 
       const rawBody = (req as RawBodyRequest).rawBody;
       const bodyHash = sha256Hex(rawBody ?? Buffer.alloc(0));
+
       const canonical = buildCanonicalRequest({
         method: req.method,
         pathWithQuery: req.originalUrl,
@@ -130,6 +145,7 @@ export function requireClientHmacAuth(): RequestHandler {
       });
 
       const expectedSignature = signCanonicalRequest(apiClient.secretValue, canonical);
+
       if (!timingSafeEqualHex(providedSignature, expectedSignature)) {
         throw new AppError('Invalid request signature', {
           code: 'AUTH_INVALID_SIGNATURE',
@@ -144,6 +160,7 @@ export function requireClientHmacAuth(): RequestHandler {
       });
 
       await touchApiClientUsage(apiClient.keyId);
+
       return next();
     } catch (error) {
       if (error instanceof AppError) {
@@ -151,6 +168,7 @@ export function requireClientHmacAuth(): RequestHandler {
       }
 
       logger.error({ error }, 'unexpected auth middleware failure');
+
       return next(
         new AppError('Authentication failed', {
           code: 'AUTH_INTERNAL_ERROR',

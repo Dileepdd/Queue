@@ -44,23 +44,21 @@ async function runWithTimeout(job: QueueJob, processor: JobProcessor, timeoutMs:
     return await Promise.race([
       processor(job),
       new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(timeoutError);
-        }, timeoutMs);
+        timeoutId = setTimeout(() => reject(timeoutError), timeoutMs);
       }),
     ]);
   } catch (error) {
     if (error === timeoutError) {
-      // The processor promise can continue running in the background after Promise.race timeout.
-      // Discard retries to reduce duplicate side effects until idempotency flow (Section 5) is active.
       await job.discard();
     }
     throw error;
   } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
+    if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
@@ -87,8 +85,6 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
     let sequentialLockKey: string | undefined;
     let sequentialLockToken: string | undefined;
 
-    // parallel: current behavior using queue worker concurrency
-    // sequential: acquire distributed lock per partition to force one-by-one processing
     if (envelope.executionMode === 'sequential') {
       const partitionKey = envelope.metadata.partitionKey ?? envelope.metadata.tenantId;
       sequentialLockKey = `seq-lock:${options.queueName}:${partitionKey}`;
@@ -110,73 +106,87 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
     }
 
     try {
-    const claim = await claimIdempotency(envelope.metadata.tenantId, envelope.metadata.idempotencyKey);
-
-    if (claim.state === 'duplicate-completed') {
-      await upsertJobStatus({
-        jobId: job.id ?? 'unknown',
-        queue: options.queueName,
-        jobName: envelope.name,
-        status: 'duplicate',
-        metadata: envelope.metadata,
-        updatedAt: new Date().toISOString(),
-      });
-      return claim.result;
-    }
-
-    if (claim.state === 'busy') {
-      // Keep the same job pending while the idempotency lock is active, without burning attempts.
-      const minRetryAt = Date.now() + appConfig.queueBackoffMs;
-      const retryAt = claim.retryAtMs ? Math.max(claim.retryAtMs + 200, minRetryAt) : minRetryAt;
-      await job.moveToDelayed(retryAt, token ?? job.token);
-      throw new DelayedError();
-    }
-
-    await upsertJobStatus({
-      jobId: job.id ?? 'unknown',
-      queue: options.queueName,
-      jobName: envelope.name,
-      status: 'active',
-      metadata: envelope.metadata,
-      updatedAt: new Date().toISOString(),
-    });
-
-    const timeoutMs = resolveTimeoutMs(job.name as JobName, options.timeoutByJobName);
-    try {
-      const result = await runWithTimeout(job, options.processor, timeoutMs);
-      await markIdempotencyCompleted(envelope.metadata.tenantId, envelope.metadata.idempotencyKey, result);
-      await upsertJobStatus({
-        jobId: job.id ?? 'unknown',
-        queue: options.queueName,
-        jobName: envelope.name,
-        status: 'completed',
-        metadata: envelope.metadata,
-        updatedAt: new Date().toISOString(),
-      });
-      return result;
-    } catch (error) {
-      const asError = error instanceof Error ? error : new Error('Unknown worker processing error');
-      await markIdempotencyFailed(
+      const claim = await claimIdempotency(
         envelope.metadata.tenantId,
         envelope.metadata.idempotencyKey,
-        (error as AppError).code ?? 'WORKER_PROCESSING_ERROR',
-        asError.message,
       );
+
+      if (claim.state === 'duplicate-completed') {
+        await upsertJobStatus({
+          jobId: job.id ?? 'unknown',
+          queue: options.queueName,
+          jobName: envelope.name,
+          status: 'duplicate',
+          metadata: envelope.metadata,
+          updatedAt: new Date().toISOString(),
+        });
+        return claim.result;
+      }
+
+      if (claim.state === 'busy') {
+        const minRetryAt = Date.now() + appConfig.queueBackoffMs;
+        const retryAt = claim.retryAtMs
+          ? Math.max(claim.retryAtMs + 200, minRetryAt)
+          : minRetryAt;
+
+        await job.moveToDelayed(retryAt, token ?? job.token);
+        throw new DelayedError();
+      }
+
       await upsertJobStatus({
         jobId: job.id ?? 'unknown',
         queue: options.queueName,
         jobName: envelope.name,
-        status: 'failed',
+        status: 'active',
         metadata: envelope.metadata,
         updatedAt: new Date().toISOString(),
-        errorSummary: asError.message,
       });
-      throw error;
-    }
+
+      const timeoutMs = resolveTimeoutMs(job.name as JobName, options.timeoutByJobName);
+
+      try {
+        const result = await runWithTimeout(job, options.processor, timeoutMs);
+
+        await markIdempotencyCompleted(
+          envelope.metadata.tenantId,
+          envelope.metadata.idempotencyKey,
+          result,
+        );
+
+        await upsertJobStatus({
+          jobId: job.id ?? 'unknown',
+          queue: options.queueName,
+          jobName: envelope.name,
+          status: 'completed',
+          metadata: envelope.metadata,
+          updatedAt: new Date().toISOString(),
+        });
+
+        return result;
+      } catch (error) {
+        const asError = error instanceof Error ? error : new Error('Unknown worker processing error');
+
+        await markIdempotencyFailed(
+          envelope.metadata.tenantId,
+          envelope.metadata.idempotencyKey,
+          (error as AppError).code ?? 'WORKER_PROCESSING_ERROR',
+          asError.message,
+        );
+
+        await upsertJobStatus({
+          jobId: job.id ?? 'unknown',
+          queue: options.queueName,
+          jobName: envelope.name,
+          status: 'failed',
+          metadata: envelope.metadata,
+          updatedAt: new Date().toISOString(),
+          errorSummary: asError.message,
+        });
+
+        throw error;
+      }
     } finally {
       if (sequentialLockKey && sequentialLockToken) {
-        // Atomic compare-and-delete to avoid TOCTOU race where another worker
-        // acquires the lock between our GET and DEL.
         await sequentialLockRedis.eval(
           `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
           1,
@@ -188,33 +198,41 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
   };
 
   const worker = new Worker(options.queueName, wrappedProcessor, workerOptions);
+
   const queueEvents = new QueueEvents(options.queueName, {
     connection: createRedisConnectionOptions('queue-events'),
   });
 
   worker.on('active', (job) => {
-    logger.info({ queue: options.queueName, mode, concurrency, jobId: job?.id, jobName: job?.name }, 'job started');
+    logger.info(
+      { queue: options.queueName, mode, concurrency, jobId: job?.id, jobName: job?.name },
+      'job started',
+    );
   });
 
   worker.on('completed', (job) => {
-    logger.info({ queue: options.queueName, jobId: job?.id, jobName: job?.name }, 'job completed');
+    logger.info(
+      { queue: options.queueName, jobId: job?.id, jobName: job?.name },
+      'job completed',
+    );
   });
 
   worker.on('failed', (job, error) => {
-    logger.error({ queue: options.queueName, jobId: job?.id, jobName: job?.name, error: error.message }, 'job failed');
+    logger.error(
+      { queue: options.queueName, jobId: job?.id, jobName: job?.name, error: error.message },
+      'job failed',
+    );
 
     recordFailureAndCheckStorm(options.queueName);
 
-    if (!job) {
-      return;
-    }
+    if (job === undefined) return;
 
     const maxAttempts = job.opts.attempts ?? 1;
     const attemptsMade = job.attemptsMade ?? 0;
+
     if (attemptsMade >= maxAttempts) {
-      const payload = job.data && typeof job.data === 'object' ? (job.data as Record<string, unknown>).payload : null;
-      const metadata =
-        job.data && typeof job.data === 'object' ? (job.data as Record<string, unknown>).metadata : undefined;
+      const payload = isObject(job.data) ? job.data.payload : null;
+      const metadata = isObject(job.data) ? job.data.metadata : undefined;
 
       if (metadata && typeof metadata === 'object') {
         const metadataObj = metadata as {
@@ -238,12 +256,16 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
           ...(error.stack ? { stack: error.stack } : {}),
         }).catch((dlqError) => {
           logger.error(
-            { queue: options.queueName, jobId: job.id, error: dlqError instanceof Error ? dlqError.message : dlqError },
+            {
+              queue: options.queueName,
+              jobId: job.id,
+              error: dlqError instanceof Error ? dlqError.message : dlqError,
+            },
             'failed to insert dead-letter record',
           );
         });
 
-        void upsertJobStatus({
+        upsertJobStatus({
           jobId: job.id ?? 'unknown',
           queue: options.queueName,
           jobName: job.name as JobName,
@@ -251,6 +273,15 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
           metadata: metadata as never,
           updatedAt: new Date().toISOString(),
           errorSummary: error.message,
+        }).catch((statusError) => {
+          logger.error(
+            {
+              queue: options.queueName,
+              jobId: job.id,
+              error: statusError instanceof Error ? statusError.message : statusError,
+            },
+            'failed to update job status after dead-letter',
+          );
         });
       }
     }
@@ -263,7 +294,12 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
   registerWorkerShutdown(worker, queueEvents);
 
   worker.on('closed', () => {
-    void sequentialLockRedis.quit();
+    sequentialLockRedis.quit().catch((err) => {
+      logger.error(
+        { error: err instanceof Error ? err.message : err },
+        'failed to close sequential lock redis connection',
+      );
+    });
   });
 
   logger.info({ queue: options.queueName, mode, concurrency }, 'worker runtime created');

@@ -41,6 +41,22 @@ interface PreparedEnqueue {
   delayMs: number;
 }
 
+/* -------------------- HELPERS -------------------- */
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function getStringOrDefault(value: unknown, defaultValue: string): string {
+  return typeof value === 'string' ? value : defaultValue;
+}
+
+function getValidEnum<T extends string>(value: unknown, allowed: T[], defaultValue: T): T {
+  return allowed.includes(value as T) ? (value as T) : defaultValue;
+}
+
+/* -------------------- CORE UTILS -------------------- */
+
 function toBullSafeJobId(input: string): string {
   return input.replaceAll(':', '__');
 }
@@ -63,6 +79,8 @@ function buildGeneratedIdempotencyKey(jobObj: Record<string, unknown>): string {
   return `${tenantId}:${name}:${partitionKey}:auto:${randomUUID()}`;
 }
 
+/* -------------------- NORMALIZATION (FIXED) -------------------- */
+
 function normalizeJobEnvelope(
   input: unknown,
   tenantIdHint?: string,
@@ -73,7 +91,10 @@ function normalizeJobEnvelope(
   const jobObj = asObject(input);
   const metadata = asObject(jobObj.metadata ?? {});
 
-  const tenantIdFromBody = typeof metadata.tenantId === 'string' && metadata.tenantId.trim().length > 0 ? metadata.tenantId.trim() : undefined;
+  const tenantIdFromBody = isNonEmptyString(metadata.tenantId)
+    ? metadata.tenantId.trim()
+    : undefined;
+
   if (tenantIdHint && tenantIdFromBody && tenantIdHint !== tenantIdFromBody) {
     throw new AppError('Request tenantId does not match authenticated tenant', {
       code: 'AUTH_TENANT_MISMATCH',
@@ -82,35 +103,36 @@ function normalizeJobEnvelope(
   }
 
   const tenantId = tenantIdHint ?? tenantIdFromBody ?? 'public';
-  const jobName = typeof jobObj.name === 'string' ? jobObj.name : 'webhook.dispatch';
-  const partitionKeyFromMetadata = typeof metadata.partitionKey === 'string' && metadata.partitionKey.trim().length > 0 ? metadata.partitionKey.trim() : undefined;
-  const partitionKeyFromUnique = typeof uniqueId === 'string' && uniqueId.trim().length > 0 ? uniqueId.trim() : undefined;
-  const partitionKey = partitionKeyFromMetadata ?? partitionKeyFromUnique ?? tenantId;
+  const jobName = getStringOrDefault(jobObj.name, 'webhook.dispatch');
+
+  const partitionKey =
+    (isNonEmptyString(metadata.partitionKey) && metadata.partitionKey.trim()) ||
+    (isNonEmptyString(uniqueId) && uniqueId.trim()) ||
+    tenantId;
 
   const idempotencyKey =
-    typeof metadata.idempotencyKey === 'string' && metadata.idempotencyKey.length >= 8
+    isNonEmptyString(metadata.idempotencyKey) && metadata.idempotencyKey.length >= 8
       ? metadata.idempotencyKey
       : buildGeneratedIdempotencyKey({
           ...jobObj,
           name: jobName,
-          metadata: {
-            ...metadata,
-            tenantId,
-            partitionKey,
-          },
+          metadata: { ...metadata, tenantId, partitionKey },
         });
 
   const correlationId =
-    typeof metadata.correlationId === 'string' && metadata.correlationId.length >= 8
+    isNonEmptyString(metadata.correlationId) && metadata.correlationId.length >= 8
       ? metadata.correlationId
       : `corr-${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 
-  const requestedAt =
-    typeof metadata.requestedAt === 'string' && metadata.requestedAt.trim().length > 0 ? metadata.requestedAt : new Date().toISOString();
+  const requestedAt = isNonEmptyString(metadata.requestedAt)
+    ? metadata.requestedAt
+    : new Date().toISOString();
 
-  const schemaVersion = typeof metadata.schemaVersion === 'number' ? metadata.schemaVersion : 1;
-  const priority = metadata.priority === 'high' || metadata.priority === 'default' || metadata.priority === 'low' ? metadata.priority : 'default';
-  const workload = metadata.workload === 'io-bound' || metadata.workload === 'cpu-heavy' ? metadata.workload : 'io-bound';
+  const schemaVersion =
+    typeof metadata.schemaVersion === 'number' ? metadata.schemaVersion : 1;
+
+  const priority = getValidEnum(metadata.priority, ['high', 'default', 'low'], 'default');
+  const workload = getValidEnum(metadata.workload, ['io-bound', 'cpu-heavy'], 'io-bound');
 
   const normalized = {
     ...jobObj,
@@ -125,7 +147,11 @@ function normalizeJobEnvelope(
       correlationId,
       requestedAt,
       tenantId,
-      enqueueSource: metadata.enqueueSource === 'individual' || metadata.enqueueSource === 'bulk' ? metadata.enqueueSource : enqueueSource ?? 'individual',
+      enqueueSource: getValidEnum(
+        metadata.enqueueSource,
+        ['individual', 'bulk'],
+        enqueueSource ?? 'individual',
+      ),
       schemaVersion,
       priority,
       workload,
@@ -135,6 +161,8 @@ function normalizeJobEnvelope(
 
   return validateJobEnvelope(normalized);
 }
+
+/* -------------------- LIMITS -------------------- */
 
 function getPayloadSizeBytes(input: unknown): number {
   return Buffer.byteLength(JSON.stringify(input), 'utf8');
@@ -157,12 +185,15 @@ function ensureWithinLimits(job: AnyJobEnvelope, delayMs: number) {
   }
 }
 
+/* -------------------- QUEUE CAPACITY -------------------- */
+
 const QUEUE_DEPTH_CACHE_TTL_MS = 2000;
 const queueDepthCache = new Map<string, { depth: number; cachedAt: number }>();
 
 async function assertQueueCapacity(queueName: string) {
   const now = Date.now();
   const cached = queueDepthCache.get(queueName);
+
   if (cached && now - cached.cachedAt < QUEUE_DEPTH_CACHE_TTL_MS) {
     if (cached.depth >= appConfig.queueMaxDepth) {
       throw new AppError('Queue is overloaded, retry later', {
@@ -175,7 +206,14 @@ async function assertQueueCapacity(queueName: string) {
   }
 
   const queue = getOrCreateQueue(queueName);
-  const counts = await queue.getJobCounts('waiting', 'active', 'delayed', 'prioritized', 'waiting-children');
+  const counts = await queue.getJobCounts(
+    'waiting',
+    'active',
+    'delayed',
+    'prioritized',
+    'waiting-children',
+  );
+
   const depth =
     (counts.waiting ?? 0) +
     (counts.active ?? 0) +
@@ -194,6 +232,8 @@ async function assertQueueCapacity(queueName: string) {
   }
 }
 
+/* -------------------- PREPARE -------------------- */
+
 async function prepareEnqueue(input: EnqueueInput): Promise<PreparedEnqueue> {
   const normalizedJob = normalizeJobEnvelope(
     input.job,
@@ -202,28 +242,33 @@ async function prepareEnqueue(input: EnqueueInput): Promise<PreparedEnqueue> {
     input.executionMode,
     input.enqueueSource,
   );
+
   const delayMs = input.delayMs ?? 0;
   ensureWithinLimits(normalizedJob, delayMs);
 
-  if (!input.skipAdmissionRateLimit) {
+  const shouldApplyRateLimit = !input.skipAdmissionRateLimit;
+  if (shouldApplyRateLimit) {
     assertTenantRateLimit(normalizedJob.metadata.tenantId);
   }
 
   const queueRouteInput = {
     priority: normalizedJob.metadata.priority,
     workload: normalizedJob.metadata.workload,
-    ...(normalizedJob.metadata.partitionKey !== undefined ? { partitionKey: normalizedJob.metadata.partitionKey } : {}),
-    ...(input.shardCount !== undefined ? { shardCount: input.shardCount } : {}),
+    ...(normalizedJob.metadata.partitionKey !== undefined && {
+      partitionKey: normalizedJob.metadata.partitionKey,
+    }),
+    ...(input.shardCount !== undefined && { shardCount: input.shardCount }),
   };
 
   const queueName = resolveQueueName(queueRouteInput);
   await assertQueueCapacity(queueName);
 
   const rawJobId = `${normalizedJob.metadata.tenantId}:${normalizedJob.metadata.idempotencyKey}`;
+
   const jobOptions: JobsOptions = {
     jobId: toBullSafeJobId(rawJobId),
-    ...(delayMs > 0 ? { delay: delayMs } : {}),
-    ...(input.retryCount !== undefined ? { attempts: input.retryCount + 1 } : {}),
+    ...(delayMs > 0 && { delay: delayMs }),
+    ...(input.retryCount !== undefined && { attempts: input.retryCount + 1 }),
   };
 
   return {
@@ -234,12 +279,20 @@ async function prepareEnqueue(input: EnqueueInput): Promise<PreparedEnqueue> {
   };
 }
 
+/* -------------------- ENQUEUE -------------------- */
+
 export async function enqueueJob(input: EnqueueInput): Promise<EnqueueResult> {
   const prepared = await prepareEnqueue(input);
   const queue = getOrCreateQueue(prepared.queueName);
 
-  const enqueued = await queue.add(prepared.envelope.name, prepared.envelope, prepared.jobOptions);
-  const resolvedJobId = enqueued.id ?? prepared.jobOptions.jobId ?? 'unknown';
+  const enqueued = await queue.add(
+    prepared.envelope.name,
+    prepared.envelope,
+    prepared.jobOptions,
+  );
+
+  const resolvedJobId =
+    enqueued.id ?? prepared.jobOptions.jobId ?? 'unknown';
 
   await upsertJobStatus({
     jobId: resolvedJobId,
@@ -258,7 +311,11 @@ export async function enqueueJob(input: EnqueueInput): Promise<EnqueueResult> {
   };
 }
 
-export async function enqueueJobsBulk(inputs: EnqueueInput[]): Promise<BulkEnqueueResultItem[]> {
+/* -------------------- BULK -------------------- */
+
+export async function enqueueJobsBulk(
+  inputs: EnqueueInput[],
+): Promise<BulkEnqueueResultItem[]> {
   const preparedWithIndex = await Promise.all(
     inputs.map(async (input, index) => ({
       index,
@@ -266,11 +323,18 @@ export async function enqueueJobsBulk(inputs: EnqueueInput[]): Promise<BulkEnque
     })),
   );
 
-  const grouped = new Map<string, Array<{ index: number; prepared: PreparedEnqueue }>>();
+  const grouped = new Map<
+    string,
+    Array<{ index: number; prepared: PreparedEnqueue }>
+  >();
+
   for (const row of preparedWithIndex) {
-    const list = grouped.get(row.prepared.queueName) ?? [];
+    let list = grouped.get(row.prepared.queueName);
+    if (!list) {
+      list = [];
+      grouped.set(row.prepared.queueName, list);
+    }
     list.push(row);
-    grouped.set(row.prepared.queueName, list);
   }
 
   const output: BulkEnqueueResultItem[] = new Array(inputs.length);
@@ -278,9 +342,9 @@ export async function enqueueJobsBulk(inputs: EnqueueInput[]): Promise<BulkEnque
   for (const [queueName, rows] of grouped.entries()) {
     const queue = getOrCreateQueue(queueName);
 
-    // Batch addBulk to reduce Redis round-trips for large imports (e.g. 10k jobs).
     for (let offset = 0; offset < rows.length; offset += BULK_REDIS_BATCH_SIZE) {
       const batch = rows.slice(offset, offset + BULK_REDIS_BATCH_SIZE);
+
       const added = await queue.addBulk(
         batch.map(({ prepared }) => ({
           name: prepared.envelope.name,
@@ -290,7 +354,9 @@ export async function enqueueJobsBulk(inputs: EnqueueInput[]): Promise<BulkEnque
       );
 
       const statusRecords = batch.map(({ prepared }, idx) => {
-        const resolvedJobId = added[idx]?.id ?? prepared.jobOptions.jobId ?? 'unknown';
+        const resolvedJobId =
+          added[idx]?.id ?? prepared.jobOptions.jobId ?? 'unknown';
+
         return {
           jobId: resolvedJobId,
           queue: prepared.queueName,
