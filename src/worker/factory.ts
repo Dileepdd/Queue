@@ -188,7 +188,7 @@ export function createWorkerRuntime(options: WorkerFactoryOptions): Worker {
     } finally {
       if (sequentialLockKey && sequentialLockToken) {
         await sequentialLockRedis.eval(
-          `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
+          'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end',
           1,
           sequentialLockKey,
           sequentialLockToken,

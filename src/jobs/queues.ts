@@ -25,8 +25,8 @@ const BASE_QUEUE_NAMES: Record<QueuePriority, Record<QueueWorkload, string>> = {
 
 function hashString(input: string): number {
   let hash = 0;
-  for (let i = 0; i < input.length; i += 1) {
-    hash = (hash * 31 + (input.codePointAt(i) ?? 0)) >>> 0;
+  for (let charIndex = 0; charIndex < input.length; charIndex += 1) {
+    hash = (hash * 31 + (input.codePointAt(charIndex) ?? 0)) >>> 0;
   }
   return hash;
 }

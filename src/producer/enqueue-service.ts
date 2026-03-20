@@ -7,8 +7,8 @@ import { AppError } from '../shared/errors.js';
 import { upsertJobStatus, upsertJobStatusBatch } from '../status/index.js';
 import { getOrCreateQueue } from './queue-registry.js';
 import { assertTenantRateLimit } from './rate-limit.js';
+import { BULK_REDIS_BATCH_SIZE, QUEUE_DEPTH_CACHE_TTL_MS, queueDepthCache } from './constants.js';
 
-const BULK_REDIS_BATCH_SIZE = 100;
 
 export interface EnqueueInput {
   job: unknown;
@@ -183,12 +183,11 @@ function ensureWithinLimits(job: AnyJobEnvelope, delayMs: number) {
       statusCode: 413,
     });
   }
+  return;
 }
 
 /* -------------------- QUEUE CAPACITY -------------------- */
 
-const QUEUE_DEPTH_CACHE_TTL_MS = 2000;
-const queueDepthCache = new Map<string, { depth: number; cachedAt: number }>();
 
 async function assertQueueCapacity(queueName: string) {
   const now = Date.now();
@@ -367,14 +366,25 @@ export async function enqueueJobsBulk(
         };
       });
 
-      await upsertJobStatusBatch(statusRecords);
+      // Determine execution mode from batch
+      const parallelMode = batch.some(({ prepared }) => prepared.envelope.executionMode === 'parallel');
+      if (parallelMode) {
+        await Promise.all(statusRecords.map(record => upsertJobStatus(record)));
+      } else {
+        for (const record of statusRecords) {
+          await upsertJobStatus(record);
+        }
+      }
 
       for (let idx = 0; idx < batch.length; idx++) {
-        const entry = batch[idx]!;
-        output[entry.index] = {
-          queue: entry.prepared.queueName,
-          jobId: statusRecords[idx]!.jobId,
-        };
+        const entry = batch[idx];
+        const statusRecord = statusRecords[idx];
+        if (entry && statusRecord) {
+          output[entry.index] = {
+            queue: entry.prepared.queueName,
+            jobId: statusRecord.jobId,
+          };
+        }
       }
     }
   }

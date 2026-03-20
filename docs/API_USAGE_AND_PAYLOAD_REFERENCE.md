@@ -231,6 +231,30 @@ Example create request body:
 
 Create/rotate responses include `secretValue` once. Persist it securely because it is required for bearer authentication and HMAC request signing.
 
+## JWT Login Endpoints
+
+### Admin JWT Login
+- Endpoint: `POST /admin/login`
+- Header: `X-Admin-Token: <ADMIN_API_TOKEN>`
+- Response: `{ "token": "<jwtToken>", "userType": "admin" }`
+- Use the returned `jwtToken` as `Authorization: Bearer <jwtToken>` for protected admin endpoints.
+
+### Client JWT Login
+- Endpoint: `POST /client/login`
+- Header: `Authorization: Bearer <clientSecret>` and `X-Access-Key-Id: <clientKeyId>` (or HMAC headers)
+- Response: `{ "token": "<jwtToken>", "userType": "client", "tenantId": "...", "clientName": "..." }`
+- Use the returned `jwtToken` as `Authorization: Bearer <jwtToken>` for protected client endpoints.
+
+### Using JWT in Requests
+- After login, set `Authorization: Bearer <jwtToken>` in all protected requests.
+- JWT replaces previous Bearer or HMAC headers for session authentication.
+
+### Environment Setup
+- Add `jwtToken` variable in Postman environment.
+- Ensure `JWT_SECRET` is set in your `.env` or config file.
+- For admin login, set `adminToken` variable.
+- For client login, set `clientSecret` and `clientKeyId` variables.
+
 ## Recommended API Call Flow
 
 1. Call `GET /health`.

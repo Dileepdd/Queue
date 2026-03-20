@@ -94,6 +94,11 @@ function mapInfrastructureError(error: unknown): AppError | undefined {
 
 export function createProducerApp() {
   const app = express();
+  // Register login routes
+  // Import login routes (TypeScript)
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const loginRoutes = require('./login-routes').default;
+  app.use(loginRoutes);
   const clientAuth = requireClientHmacAuth();
   const adminAuth = requireAdminToken();
 

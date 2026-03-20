@@ -1,0 +1,70 @@
+{
+  "info": {
+    "name": "Queue System API (JWT)",
+    "description": "Collection for JWT login and protected endpoints.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "jwtToken", "value": "" },
+    { "key": "adminToken", "value": "replace-with-strong-admin-token" },
+    { "key": "accessKeyId", "value": "client_demo_key_001" },
+    { "key": "secretKey", "value": "replace-with-strong-secret" }
+  ],
+  "item": [
+    {
+      "name": "Admin JWT Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "X-Admin-Token", "value": "{{adminToken}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/admin/login", "host": ["{{baseUrl}}"], "path": ["admin", "login"] },
+        "description": "Login as admin and receive JWT token."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "pm.test('Admin login returns 200', function () { pm.response.to.have.status(200); });",
+            "const responseJson = pm.response.json();",
+            "if (responseJson.token) { pm.environment.set('jwtToken', responseJson.token); }"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "Client JWT Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{secretKey}}" },
+          { "key": "X-Access-Key-Id", "value": "{{accessKeyId}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/client/login", "host": ["{{baseUrl}}"], "path": ["client", "login"] },
+        "description": "Login as client and receive JWT token."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "type": "text/javascript", "exec": [
+            "pm.test('Client login returns 200', function () { pm.response.to.have.status(200); });",
+            "const responseJson = pm.response.json();",
+            "if (responseJson.token) { pm.environment.set('jwtToken', responseJson.token); }"
+          ] }
+        }
+      ]
+    },
+    {
+      "name": "Protected Endpoint Example",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/jobs", "host": ["{{baseUrl}}"], "path": ["jobs"] },
+        "description": "Example of using JWT token for protected endpoint."
+      }
+    }
+  ]
+}
